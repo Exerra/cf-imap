@@ -1,0 +1,12 @@
+{
+  "name": "cf-imap",
+  "module": "src/index.ts",
+  "type": "module",
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240117.0",
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  }
+}
