@@ -5,7 +5,7 @@
   "types": "dist/index.d.ts",
   "type": "module",
   "version": "0.0.0-name-reserve",
-  "description": "IMAP (v4) client for the Cloudflare Workers platform.",
+  "description": "(name reserved, not out yet) IMAP (v4) client for the Cloudflare Workers platform.",
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240117.0",
     "@types/bun": "latest"

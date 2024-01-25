@@ -1,15 +1,5 @@
 # cf-imap
 
-To install dependencies:
+⚠️ This package is only for the reservation of the name `cf-imap`. It does NOT do anything in its current state, please check back later (I am actively working on it, should be out soon) ⚠️
 
-```bash
-bun install
-```
-
-To run:
-
-```bash
-bun run src/index.ts
-```
-
-This project was created using `bun init` in bun v1.0.25. [Bun](https://bun.sh) is a fast all-in-one JavaScript runtime.
+IMAP (v4) client for the Cloudflare Workers platform.
