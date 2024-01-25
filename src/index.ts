@@ -273,7 +273,7 @@ export class WorkersIMAP {
 
         console.log(await this.decoder.decode((await this.reader.read()).value) ? "" : "") // haks
 
-        let query = `A5 FETCH ${limit.join(":")} (BODY${peek ? ".PEEK" : ""}[HEADER.FIELDS (SUBJECT FROM TO MESSAGE-ID CONTENT-TYPE DATE)]${byteLimit ?  `<${byteLimit}>` : ""})\n`
+        let query = `A5 FETCH ${limit.join(":")} (BODY${peek ? ".PEEK" : ""}[TEXT] BODY${peek ? ".PEEK" : ""}[HEADER.FIELDS (SUBJECT FROM TO MESSAGE-ID CONTENT-TYPE DATE)]${byteLimit ?  `<${byteLimit}>` : ""})\n`
 
         let encoded = await this.encoder.encode(query)
         await this.writer.write(encoded)
@@ -281,10 +281,6 @@ export class WorkersIMAP {
         let decoded = await this.decoder.decode((await this.reader.read()).value)
 
         let responses = decoded.split("\r\n")
-
-        console.log(responses)
-
-        // console.log()
 
         let emails: Email[] = []
         let emailsRaw = [];
@@ -304,29 +300,55 @@ export class WorkersIMAP {
             emailsRaw.push(currentEmail);
         }
 
-        // console.log(responses.join("\n"))
-
         for (let emailRaw of emailsRaw) {
             let email: Email = {
-                from: emailRaw.find(r => r.startsWith("From:"))?.replace("From: ", "").trim()!,
-                to: emailRaw.find(r => r.startsWith("To:"))?.replace("To: ", "").trim()!,
-                subject: emailRaw.find(r => r.startsWith("Subject:"))?.replace("Subject: ", "").trim()!,
-                messageID: emailRaw.find(r => r.startsWith("Message-ID:"))?.replace("Message-ID: ", "").trim()!,
-                contentType: emailRaw.find(r => r.startsWith("Content-Type:"))?.replace("Content-Type: ", "").trim()!,
-                date: new Date(emailRaw.find(r => r.startsWith("Date:"))?.replace("Date: ", "").trim() as string)
+                from: emailRaw.find(r => r.toLowerCase().startsWith("from:"))?.slice("from: ".length).trim()!,
+                to: emailRaw.find(r => r.toLowerCase().startsWith("to:"))?.slice("to: ".length).trim()!,
+                subject: emailRaw.find(r => r.toLowerCase().startsWith("subject:"))?.slice("subject: ".length).trim()!,
+                messageID: emailRaw.find(r => r.toLowerCase().startsWith("message-id:"))?.slice("message-id: ".length).trim()!,
+                contentType: emailRaw.find(r => r.toLowerCase().startsWith("content-type:"))?.slice("content-type: ".length).trim()!,
+                date: new Date(emailRaw.find(r => r.toLowerCase().startsWith("date:"))?.slice("date: ".length).trim() as string),
+                body: ""
             }
+
+            let mutRaw = emailRaw
+
+            for (let i = mutRaw.length; i--; i < 0) {
+                console.log(i)
+
+                let el = mutRaw[i]
+
+                if (el === "") {
+                    mutRaw.pop()
+
+                    continue
+                }
+
+                if (el.startsWith("A5")) {
+                    mutRaw.pop()
+
+                    continue
+                }
+
+                if (el === ")") {
+                    mutRaw.pop()
+
+                    continue
+                }
+
+                break
+            }
+
+            let bodyStartIndex = mutRaw.findIndex(r => r.trim().startsWith("BODY[TEXT]"))
+
+            mutRaw.splice(0, bodyStartIndex + 1)
+
+            email.body = mutRaw.join("\n")
 
             emails.push(email)
         }
 
-
-        console.log(currentEmail, emailsRaw)
-
-        console.log(emails)
-        // console.log(`g21 select "${folder}"`)
-
-        // console.log(await this.decoder.decode((await this.reader.read()).value))
+        return emails
     }
-
-
 }
+

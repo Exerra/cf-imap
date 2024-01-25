@@ -15,5 +15,6 @@ export type Email = {
     subject: string,
     messageID: string,
     contentType: string,
-    date: Date
+    date: Date,
+    body: string
 }
