@@ -264,7 +264,7 @@ export class WorkersIMAP {
         return metadata
     }
 
-    // TODO
+    // TODO vajag tā lai pabeidz būt streamots
 
     fetchEmails = async ({ folder, byteLimit, limit, peek = true }: FetchEmailsProps) => {
         if (!this.socket || !this.reader || !this.writer) throw new Error("Not initialised")
@@ -349,6 +349,30 @@ export class WorkersIMAP {
         }
 
         return emails
+    }
+
+    check = async () => {
+        if (!this.socket || !this.reader || !this.writer) throw new Error("Not initialised")
+
+        let query = `FXXZ CHECK\n`
+
+        let encoded = await this.encoder.encode(query)
+
+        await this.writer.write(encoded)
+
+        let decoded = await this.decoder.decode((await this.reader.read()).value)
+        decoded = await this.decoder.decode((await this.reader.read()).value)
+        decoded = await this.decoder.decode((await this.reader.read()).value)
+        decoded = await this.decoder.decode((await this.reader.read()).value)
+        decoded = await this.decoder.decode((await this.reader.read()).value)
+        decoded = await this.decoder.decode((await this.reader.read()).value)
+        decoded = await this.decoder.decode((await this.reader.read()).value)
+
+        let responses = decoded.split("\r\n")
+
+        console.log(responses)
+
+        return responses
     }
 }
 
