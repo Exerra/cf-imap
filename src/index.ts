@@ -11,7 +11,7 @@ type Options = {
     }
 }
 
-export class WorkersIMAP {
+export class CFImap {
     options = {
         host: "",
         port: NaN,
