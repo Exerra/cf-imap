@@ -273,7 +273,9 @@ export class WorkersIMAP {
 
         console.log(await this.decoder.decode((await this.reader.read()).value) ? "" : "") // haks
 
-        let encoded = await this.encoder.encode(`A5 FETCH ${limit.join(":")} (BODY${peek ? ".PEEK" : ""}[HEADER.FIELDS (SUBJECT FROM TO MESSAGE-ID CONTENT-TYPE DATE)]${byteLimit ?  `<${byteLimit}>` : ""})\n`)
+        let query = `A5 FETCH ${limit.join(":")} (BODY${peek ? ".PEEK" : ""}[HEADER.FIELDS (SUBJECT FROM TO MESSAGE-ID CONTENT-TYPE DATE)]${byteLimit ?  `<${byteLimit}>` : ""})\n`
+
+        let encoded = await this.encoder.encode(query)
         await this.writer.write(encoded)
         
         let decoded = await this.decoder.decode((await this.reader.read()).value)
