@@ -8,7 +8,8 @@
   "description": "(name reserved, not out yet) IMAP (v4) client for the Cloudflare Workers platform.",
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240117.0",
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "wrangler": "^3.24.0"
   },
   "peerDependencies": {
     "typescript": "^5.0.0"
