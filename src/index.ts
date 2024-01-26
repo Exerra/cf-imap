@@ -35,6 +35,8 @@ export class CFImap {
 
     session: { id?: string, protocol?: string } = {}
 
+    selectedFolder = ""
+
     private encoder = new TextEncoder()
     private decoder = new TextDecoder()
 
@@ -230,23 +232,29 @@ export class CFImap {
             }
         }
 
+        this.selectedFolder = folder
+
         return metadata
     }
 
+    /**
+     * Fetches emails from a folder specified by the selectFolder() function.
+     * @param {Object} props - Props
+     * @param {string} props.folder - Name of the folder to get
+     * @returns 
+     */
     fetchEmails = async ({ folder, byteLimit, limit, peek = true }: FetchEmailsProps) => {
         if (!this.socket || !this.reader || !this.writer) throw new Error("Not initialised")
 
-        await this.writer.write(await this.encoder.encode(`g21 SELECT "${folder}"\n`))
-
-        await this.decoder.decode((await this.reader.read()).value) // haks
+        if (!this.selectedFolder) throw new Error("Folder not selected! Before running this function, run the selectFolder() function!")
 
         let query = `A5 FETCH ${limit.join(":")} (BODY${peek ? ".PEEK" : ""}[TEXT] BODY${peek ? ".PEEK" : ""}[HEADER.FIELDS (SUBJECT FROM TO MESSAGE-ID CONTENT-TYPE DATE)]${byteLimit ?  `<${byteLimit}>` : ""})\n`
 
         let encoded = await this.encoder.encode(query)
+
         await this.writer.write(encoded)
         
         let decoded = await this.decoder.decode((await this.reader.read()).value)
-
 
         let responses = decoded.split("\r\n")
 
