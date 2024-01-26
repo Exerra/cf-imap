@@ -42,9 +42,6 @@ export class CFImap {
     private reader: ReadableStreamDefaultReader<any> | null = null
 
     connect = async () => {
-
-        console.log(0)
-
         let options: SocketOptions = {
             allowHalfOpen: true
         }
@@ -55,12 +52,9 @@ export class CFImap {
 
         if (this.options.tls) {
             const secureSocket = this.socket.startTls()
-            console.log(3)
 
             this.socket = secureSocket
         }
-
-        console.log(0)
 
 
         this.writer = this.socket.writable.getWriter()
@@ -369,6 +363,10 @@ export class CFImap {
         return emails
     }
 
+    /**
+     * Requests a "checkpoint" on the server, a.k.a requests that the server does some houskeeping.
+     * Almost never used, but exists in the RFC 3501 spec.
+     */
     check = async () => {
         if (!this.socket || !this.reader || !this.writer) throw new Error("Not initialised")
 
@@ -381,8 +379,6 @@ export class CFImap {
         let decoded = await this.decoder.decode((await this.reader.read()).value)
 
         let responses = decoded.split("\r\n")
-
-        console.log(responses)
 
         return responses
     }
