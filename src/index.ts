@@ -313,6 +313,7 @@ export class CFImap {
         }
 
         for (let emailRaw of emailsRaw) {
+            // ? Looks a bit ugly, might need to be improved (func that finds?)
             let email: Email = {
                 from: emailRaw.find(r => r.toLowerCase().startsWith("from:"))?.slice("from: ".length).trim()!,
                 to: emailRaw.find(r => r.toLowerCase().startsWith("to:"))?.slice("to: ".length).trim()!,
@@ -320,6 +321,7 @@ export class CFImap {
                 messageID: emailRaw.find(r => r.toLowerCase().startsWith("message-id:"))?.slice("message-id: ".length).trim()!,
                 contentType: emailRaw.find(r => r.toLowerCase().startsWith("content-type:"))?.slice("content-type: ".length).trim()!,
                 date: new Date(emailRaw.find(r => r.toLowerCase().startsWith("date:"))?.slice("date: ".length).trim() as string),
+                raw: emailRaw.join("\n"),
                 body: ""
             }
 
