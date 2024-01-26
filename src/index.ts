@@ -264,8 +264,6 @@ export class CFImap {
         return metadata
     }
 
-    // TODO vajag tā lai pabeidz būt streamots
-
     fetchEmails = async ({ folder, byteLimit, limit, peek = true }: FetchEmailsProps) => {
         if (!this.socket || !this.reader || !this.writer) throw new Error("Not initialised")
 4
@@ -280,11 +278,31 @@ export class CFImap {
         
         let decoded = await this.decoder.decode((await this.reader.read()).value)
 
+
         let responses = decoded.split("\r\n")
+
+        const timeout = async (): Promise<boolean> => {
+            // ? Convert to function
+            if (responses.findLastIndex(r => r.startsWith("A5 OK Completed")) == -1) {
+                if (!this.reader) return false // mostly so it doesnt scream about this.reader being possibly undefined
+
+                decoded = await this.decoder.decode((await this.reader.read()).value)
+
+                responses = [...responses, ...decoded.split("\r\n")]
+
+                return timeout()
+            }
+
+            return true
+        }
+
+        await timeout()
 
         let emails: Email[] = []
         let emailsRaw = [];
         let currentEmail = [];
+
+        // console.log(responses)
 
         for (let line of responses) {
             if (line.startsWith('*')) {
@@ -314,8 +332,6 @@ export class CFImap {
             let mutRaw = emailRaw
 
             for (let i = mutRaw.length; i--; i < 0) {
-                console.log(i)
-
                 let el = mutRaw[i]
 
                 if (el === "") {
@@ -348,6 +364,8 @@ export class CFImap {
             emails.push(email)
         }
 
+        // console.log(emails)
+
         return emails
     }
 
@@ -361,12 +379,6 @@ export class CFImap {
         await this.writer.write(encoded)
 
         let decoded = await this.decoder.decode((await this.reader.read()).value)
-        decoded = await this.decoder.decode((await this.reader.read()).value)
-        decoded = await this.decoder.decode((await this.reader.read()).value)
-        decoded = await this.decoder.decode((await this.reader.read()).value)
-        decoded = await this.decoder.decode((await this.reader.read()).value)
-        decoded = await this.decoder.decode((await this.reader.read()).value)
-        decoded = await this.decoder.decode((await this.reader.read()).value)
 
         let responses = decoded.split("\r\n")
 
