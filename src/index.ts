@@ -62,27 +62,13 @@ export class CFImap {
 
         let chunks: string[] = []
 
-        // console.log(await secureSocket.readable)
-
-        // for await (const chunk of secureSocket.readable) {
-        //     let decoded = decoder.decode(chunk)
-
-        //     console.log(decoded)
-
-        //     if (decoded === "* OK IMAP4 ready") return
-        // }
-
-        console.log(await this.decoder.decode((await this.reader.read()).value) ? "" : "")
-
-        // A1 login sapuin-test@inbox.lv yhAXMR451q
+        await this.decoder.decode((await this.reader.read()).value)
 
         const encoded = this.encoder.encode(`A1 login ${this.options.auth.username} ${this.options.auth.password}\n`)
 
         await this.writer.write(encoded)
 
         let returnvalue = await this.decoder.decode((await this.reader.read()).value)
-
-        // await reader.releaseLock()
 
         if (!returnvalue.startsWith("A1 OK")) throw new Error("A1 netiek atgriezts")
 
@@ -95,18 +81,7 @@ export class CFImap {
             }
         }
 
-        // this.socket.close()
-
         return
-
-        // console.log(secureSocket.readable)
-
-        // const read = await reader.read()
-
-        // console.log(decoder.decode(read.value))
-        
-
-        // console.log(new TextDecoder().decode(await secureSocket.readable.getReader().read()?.value))
 
     }
 
@@ -260,10 +235,10 @@ export class CFImap {
 
     fetchEmails = async ({ folder, byteLimit, limit, peek = true }: FetchEmailsProps) => {
         if (!this.socket || !this.reader || !this.writer) throw new Error("Not initialised")
-4
+
         await this.writer.write(await this.encoder.encode(`g21 SELECT "${folder}"\n`))
 
-        console.log(await this.decoder.decode((await this.reader.read()).value) ? "" : "") // haks
+        await this.decoder.decode((await this.reader.read()).value) // haks
 
         let query = `A5 FETCH ${limit.join(":")} (BODY${peek ? ".PEEK" : ""}[TEXT] BODY${peek ? ".PEEK" : ""}[HEADER.FIELDS (SUBJECT FROM TO MESSAGE-ID CONTENT-TYPE DATE)]${byteLimit ?  `<${byteLimit}>` : ""})\n`
 
@@ -295,8 +270,6 @@ export class CFImap {
         let emails: Email[] = []
         let emailsRaw = [];
         let currentEmail = [];
-
-        // console.log(responses)
 
         for (let line of responses) {
             if (line.startsWith('*')) {
@@ -359,8 +332,6 @@ export class CFImap {
 
             emails.push(email)
         }
-
-        // console.log(emails)
 
         return emails
     }
