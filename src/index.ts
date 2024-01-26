@@ -43,6 +43,12 @@ export class CFImap {
     private writer: WritableStreamDefaultWriter<any> | null = null
     private reader: ReadableStreamDefaultReader<any> | null = null
 
+    /**
+     * Connects to the IMAP server. Must be run after initialising the CFImap class, otherwise nothing will work.
+     * 
+     * @async
+     * @returns {void}
+     */
     connect = async () => {
         let options: SocketOptions = {
             allowHalfOpen: true
@@ -87,6 +93,9 @@ export class CFImap {
 
     }
 
+    /**
+     * Returns the prefix and hierarchy delimiter to personal and shared namespaces that the logged in user has access to. Should be the second ran function.
+     */
     getNamespaces = async () => {
         if (!this.socket || !this.reader || !this.writer) throw new Error("Not connected to an IMAP server")
 
@@ -113,6 +122,11 @@ export class CFImap {
         return namespaces
     }
 
+    /**
+     * Returns all folders in the specified namespace along with any flags.
+     * @param {string} namespace - From which namespace to list folders
+     * @param {string} filter - String filter
+     */
     getFolders = async (namespace: string, filter = "*") => {
         if (!this.socket || !this.reader || !this.writer) throw new Error("Not connected to an IMAP server")
 
@@ -149,6 +163,10 @@ export class CFImap {
         return folders
     }
 
+    /**
+     * Selects a folder for use in the email GET & FETCH functions. Must be run before those commands, otherwise those commands will throw an error.
+     * @param folder - Selectable folder
+     */
     selectFolder = async (folder: string) => {
         if (!this.socket || !this.reader || !this.writer) throw new Error("Not initialised")
 
@@ -239,9 +257,12 @@ export class CFImap {
 
     /**
      * Fetches emails from a folder specified by the selectFolder() function.
+     * 
+     * @async
      * @param {Object} props - Props
-     * @param {string} props.folder - Name of the folder to get
-     * @returns 
+     * @param {number} [props.byteLimit] - Maximum size of the emails to fetch (optional, not recommended)
+     * @param {[ number, number ]} props.limit - Range of emails to fetch.
+     * @param {boolean} [props.peek=true] - If true (optional, defaults to true), upon fetch the emails won't get the \Seen flag set.
      */
     fetchEmails = async ({ folder, byteLimit, limit, peek = true }: FetchEmailsProps) => {
         if (!this.socket || !this.reader || !this.writer) throw new Error("Not initialised")
