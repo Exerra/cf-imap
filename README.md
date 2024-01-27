@@ -4,7 +4,7 @@ IMAP (v4) client for the Cloudflare Workers platform. Do not try to run this on 
 
 Warning, this version is **pre-release**, so breaking changes **may** happen between versions. At this stage for existing functions it is unlikely, however the possibility still exists.
 
-# Initialisation
+## Initialisation
 
 The `CFImap` class can be created in any part of the code, **however it is advised to use the `connect()` function only in a request handler**. That is because the Cloudflare Workers platform limits some functionality (mainly `await`) outside of handlers.
 
@@ -24,6 +24,14 @@ const imap = new CFImap({
 const handleRequest = async () => {
     await imap.connect()
 }
+```
+
+## Closing the connection
+
+`cf-imap` exposes the socket used to communicate with the IMAP server, so just use that to close it.
+
+```ts
+imap.socket?.close()
 ```
 
 ## Documentation
