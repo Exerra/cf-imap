@@ -1,5 +1,5 @@
 import { connect } from "cloudflare:sockets";
-import type { Email, FetchEmailsProps } from "./types/emails";
+import type { Email, FetchEmailsProps, SearchEmailsProps } from "./types/emails";
 
 type Options = {
     host: string,
@@ -323,6 +323,7 @@ export class CFImap {
 
         for (let emailRaw of emailsRaw) {
             // ? Looks a bit ugly, might need to be improved (func that finds?)
+            // ? headers field
             let email: Email = {
                 from: emailRaw.find(r => r.toLowerCase().startsWith("from:"))?.slice("from: ".length).trim()!,
                 to: emailRaw.find(r => r.toLowerCase().startsWith("to:"))?.slice("to: ".length).trim()!,
@@ -371,6 +372,105 @@ export class CFImap {
         }
 
         return emails
+    }
+
+
+    /**
+     * Searches emails based on the props given.
+     */
+    searchEmails = async (props: SearchEmailsProps) => {
+        if (!this.socket || !this.reader || !this.writer) throw new Error("Not initialised")
+
+        if (!props) throw new Error("Props not given")
+
+        if (Object.keys(props).length === 0) throw new Error("No search options given. You must specify at least one search option.")
+
+        if (!this.selectFolder) throw new Error("Folder not selected! Before running this function, run the selectFolder() function!")
+
+        let unFlags = [
+            "answered",
+            "deleted",
+            "draft",
+            "flagged",
+            "seen"
+        ]
+
+        let command = `A5 SEARCH`
+
+        let options: string[] = []
+
+        let keys = Object.keys(props)
+
+        for (let key of keys) {
+            // ! fix later!!!
+            // @ts-ignore
+            let value = props[key];
+
+            switch (typeof value) {
+                case "boolean":
+                    if (value) options.push(key.toUpperCase())
+                    else {
+                        if (unFlags.includes(key)) options.push(`un${key}`.toUpperCase())
+                    }
+                    break;
+                case "string":
+                    options.push(`${key.toUpperCase()} ${value}`)
+                    break;
+                case "number":
+                    options.push(`${key.replace("Than", "")} ${value.toString()}`.toUpperCase())
+                    break;
+                case "object":
+                    if (Array.isArray(value)) {
+                        let values = []
+
+                        for (let v of value) {
+                            values.push(`${v}`)
+                        }
+
+                        options.push(`${key.toUpperCase()} ${values.join("")}`)
+                    }
+
+                    else if (value instanceof Date && !isNaN(value.valueOf())) {
+                        const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+                        const monthIndex = value.getMonth();
+
+                        options.push(`${key.toUpperCase()} ${value.getDate()}-${monthNames[monthIndex]}-${value.getFullYear()}`)
+                    }
+
+                    else if (key == "header") {
+                        options.push(`${key.toUpperCase()} ${value.key.toUpperCase()} "${value.value}"`)
+                    }
+                    break;
+            }
+
+            if (keys.includes("all") && props["all"] === true) {
+                options = ["ALL"]
+            }
+        }
+
+        let query = `${command} ${options.join(" ")}`
+
+        await this.writer.write(await this.encoder.encode(query.trim() +  "\r\n"))
+
+        let decoded = await this.decoder.decode((await this.reader.read()).value)
+
+        let responses = decoded.split("\r\n")
+
+        let ids: number[] = []
+
+        for (let response of responses) {
+            if (!response.startsWith("* SEARCH")) continue
+
+            let temp = response.replace("* SEARCH ", "").split(" ")
+
+            for (let t of temp) {
+                ids.push(parseInt(t))
+            }
+
+            break;
+        }
+
+        return ids
     }
 
     /**
