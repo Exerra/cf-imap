@@ -34,6 +34,7 @@ export class CFImap {
     socket: ReturnType<typeof connect> | null = null
 
     // TODO: docs (not that necessary, but nice to have)
+    // ? console log a warning on each function if protocol not imapv4?
     session: { id?: string, protocol?: string } = {}
 
     selectedFolder = ""
