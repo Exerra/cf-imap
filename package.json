@@ -14,7 +14,6 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240117.0",
-    "@types/bun": "latest",
     "wrangler": "^3.24.0"
   },
   "peerDependencies": {
