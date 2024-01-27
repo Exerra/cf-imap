@@ -2,7 +2,7 @@
 
 IMAP (v4) client for the Cloudflare Workers platform. Do not try to run this on other runtimes, it will not work.
 
-Warning, this version is **pre-release**, so expect breaking changes **may** happen between versions. At this stage for existing functions it is unlikely, however the possibility still exists.
+Warning, this version is **pre-release**, so breaking changes **may** happen between versions. At this stage for existing functions it is unlikely, however the possibility still exists.
 
 # Initialisation
 
