@@ -4,7 +4,7 @@
   "main": "dist/indes.js",
   "types": "dist/index.d.ts",
   "type": "module",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "(prerelease) IMAP (v4) client for the Cloudflare Workers platform.",
   "repository": {
     "type": "git",
