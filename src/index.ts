@@ -281,6 +281,7 @@ export class CFImap {
 
         const timeout = async (): Promise<boolean> => {
             // ? Convert to function
+            // @ts-ignore findLastIndex exists on string[], however the tsc compiler thinks it doesn't
             if (responses.findLastIndex(r => r.startsWith("A5 OK Completed")) == -1) {
                 if (!this.reader) return false // mostly so it doesnt scream about this.reader being possibly undefined
 

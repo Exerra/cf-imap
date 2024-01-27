@@ -10,6 +10,9 @@
     "type": "git",
     "url": "https://github.com/Exerra/cf-imap.git"
   },
+  "scripts": {
+    "build": "tsc --project tsconfig.types.json"
+  },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240117.0",
     "@types/bun": "latest",
