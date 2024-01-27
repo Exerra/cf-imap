@@ -27,7 +27,8 @@
     "imap4",
     "imapv4",
     "imap client",
-    "cloudflare"
+    "cloudflare",
+    "email"
   ],
   "author": "Exerra",
   "files": [
