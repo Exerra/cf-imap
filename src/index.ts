@@ -33,6 +33,7 @@ export class CFImap {
 
     socket: ReturnType<typeof connect> | null = null
 
+    // TODO: docs (not that necessary, but nice to have)
     session: { id?: string, protocol?: string } = {}
 
     selectedFolder = ""
@@ -78,6 +79,7 @@ export class CFImap {
 
         let returnvalue = await this.decoder.decode((await this.reader.read()).value)
 
+        // ? Have to test with slow IMAP servers, the speed at which this grabs the read data might be too fast for some.
         if (!returnvalue.startsWith("A1 OK")) throw new Error("A1 netiek atgriezts")
 
         let regex = /^A1 OK \[CAPABILITY (\w{1,}) .{2,}(?=])\] User logged in SESSIONID=<(.{1,}(?=>))>/.exec(returnvalue)
@@ -279,8 +281,9 @@ export class CFImap {
 
         let responses = decoded.split("\r\n")
 
+        // With large data the server might still be streaming data when we grab it from the TCP stream, This basically ensures that we get to the very end.
         const timeout = async (): Promise<boolean> => {
-            // ? Convert to function
+            // ! Might fail when the response is a failure, might need error checking for that 
             // @ts-ignore findLastIndex exists on string[], however the tsc compiler thinks it doesn't
             if (responses.findLastIndex(r => r.startsWith("A5 OK Completed")) == -1) {
                 if (!this.reader) return false // mostly so it doesnt scream about this.reader being possibly undefined
@@ -301,7 +304,9 @@ export class CFImap {
         let emailsRaw = [];
         let currentEmail = [];
 
+        // Seperates the emails into seperate arrays
         for (let line of responses) {
+            // "*" is sent by the server as a sort of "start section" kind of thing
             if (line.startsWith('*')) {
                 if (currentEmail.length > 0) {
                     emailsRaw.push(currentEmail);
@@ -330,6 +335,7 @@ export class CFImap {
 
             let mutRaw = emailRaw
 
+            // Removes the useless junk at the end of the response. Goes backwards (starts at the last element and works its way up)
             for (let i = mutRaw.length; i--; i < 0) {
                 let el = mutRaw[i]
 
