@@ -31,8 +31,7 @@
   ],
   "author": "Exerra",
   "files": [
-    "dist/*.js",
-    "dist/*.d.ts"
+    "dist/"
   ],
   "bugs": {
     "url": "https://github.com/Exerra/cf-imap/issues"
