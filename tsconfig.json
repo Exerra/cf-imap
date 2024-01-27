@@ -20,6 +20,17 @@
     "forceConsistentCasingInFileNames": true,
     "types": [
       "@cloudflare/workers-types"
-    ]
-  }
+    ],
+
+    // imported from tsconfig.types.json
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "noEmit": false,
+    "emitDeclarationOnly": false,
+    "declaration": true,
+    "removeComments": false // Removes TODOs and ? comments - good, removes JSDoc - bad
+  },
+  "include": [
+    "src/**/*.ts"
+  ]
 }
