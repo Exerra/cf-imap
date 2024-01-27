@@ -74,21 +74,34 @@ export class CFImap {
 
         await this.decoder.decode((await this.reader.read()).value)
 
-        const encoded = this.encoder.encode(`A1 login ${this.options.auth.username} ${this.options.auth.password}\n`)
+        const encoded = this.encoder.encode(`A1 login ${this.options.auth.username} ${this.options.auth.password}\r\n`)
 
         await this.writer.write(encoded)
 
         let returnvalue = await this.decoder.decode((await this.reader.read()).value)
 
+        let responses = await returnvalue.split("\r\n")
+
         // ? Have to test with slow IMAP servers, the speed at which this grabs the read data might be too fast for some.
-        if (!returnvalue.startsWith("A1 OK")) throw new Error("A1 netiek atgriezts")
+        if (!responses[responses.length - 2].startsWith("A1 OK")) throw new Error("A1 netiek atgriezts")
 
-        let regex = /^A1 OK \[CAPABILITY (\w{1,}) .{2,}(?=])\] User logged in SESSIONID=<(.{1,}(?=>))>/.exec(returnvalue)
+        if (responses.find(r => r.startsWith("* CAPABILITY")) != undefined) {
+            let regex = /^\* CAPABILITY (\w{1,}) .{2,}/.exec(responses[0])
 
-        if (regex) {
-            this.session = {
-                id: regex[2],
-                protocol: regex[1]
+            if (regex) {
+                this.session = {
+                    id: "",
+                    protocol: regex[1]
+                }
+            }   
+        } else {
+            let regex = /^A1 OK \[CAPABILITY (\w{1,}) .{2,}(?=])\] User logged in SESSIONID=<(.{1,}(?=>))>/.exec(responses[0])
+
+            if (regex) {
+                this.session = {
+                    id: regex[2],
+                    protocol: regex[1]
+                }
             }
         }
 
@@ -102,7 +115,7 @@ export class CFImap {
     getNamespaces = async () => {
         if (!this.socket || !this.reader || !this.writer) throw new Error("Not connected to an IMAP server")
 
-        let encoded = await this.encoder.encode("n namespace\n")
+        let encoded = await this.encoder.encode("n namespace\r\n")
 
         await this.writer.write(encoded)
 
@@ -133,7 +146,7 @@ export class CFImap {
     getFolders = async (namespace: string, filter = "*") => {
         if (!this.socket || !this.reader || !this.writer) throw new Error("Not connected to an IMAP server")
 
-        let encoded = await this.encoder.encode(`A1 list "${namespace}" "${filter}"\n`)
+        let encoded = await this.encoder.encode(`A1 list "${namespace}" "${filter}"\r\n`)
 
         await this.writer.write(encoded)
 
@@ -175,7 +188,7 @@ export class CFImap {
 
         if (!folder) throw new Error("Folder not given")
 
-        await this.writer.write(await this.encoder.encode(`g21 SELECT "${folder}"\n`))
+        await this.writer.write(await this.encoder.encode(`g21 SELECT "${folder}"\r\n`))
 
         let decoded = await this.decoder.decode((await this.reader.read()).value)
 
@@ -272,7 +285,7 @@ export class CFImap {
 
         if (!this.selectedFolder) throw new Error("Folder not selected! Before running this function, run the selectFolder() function!")
 
-        let query = `A5 FETCH ${limit.join(":")} (BODY${peek ? ".PEEK" : ""}[TEXT] BODY${peek ? ".PEEK" : ""}[HEADER.FIELDS (SUBJECT FROM TO MESSAGE-ID CONTENT-TYPE DATE)]${byteLimit ?  `<${byteLimit}>` : ""})\n`
+        let query = `A5 FETCH ${limit.join(":")} (BODY${peek ? ".PEEK" : ""}[TEXT] BODY${peek ? ".PEEK" : ""}[HEADER.FIELDS (SUBJECT FROM TO MESSAGE-ID CONTENT-TYPE DATE)]${byteLimit ?  `<${byteLimit}>` : ""})\r\n`
 
         let encoded = await this.encoder.encode(query)
 
@@ -286,7 +299,7 @@ export class CFImap {
         const timeout = async (): Promise<boolean> => {
             // ! Might fail when the response is a failure, might need error checking for that 
             // @ts-ignore findLastIndex exists on string[], however the tsc compiler thinks it doesn't
-            if (responses.findLastIndex(r => r.startsWith("A5 OK Completed")) == -1) {
+            if (responses.findLastIndex(r => r.startsWith("A5 OK")) == -1) {
                 if (!this.reader) return false // mostly so it doesnt scream about this.reader being possibly undefined
 
                 decoded = await this.decoder.decode((await this.reader.read()).value)
@@ -461,9 +474,11 @@ export class CFImap {
         for (let response of responses) {
             if (!response.startsWith("* SEARCH")) continue
 
-            let temp = response.replace("* SEARCH ", "").split(" ")
+            let temp = response.replace("* SEARCH", "").trim().split(" ")
 
             for (let t of temp) {
+                if (t === "") continue
+
                 ids.push(parseInt(t))
             }
 
@@ -480,7 +495,7 @@ export class CFImap {
     check = async () => {
         if (!this.socket || !this.reader || !this.writer) throw new Error("Not initialised")
 
-        let query = `FXXZ CHECK\n`
+        let query = `FXXZ CHECK\r\n`
 
         let encoded = await this.encoder.encode(query)
 
