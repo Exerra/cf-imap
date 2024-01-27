@@ -5,7 +5,11 @@
   "types": "dist/index.d.ts",
   "type": "module",
   "version": "0.0.1",
-  "description": "(name reserved, not out yet) IMAP (v4) client for the Cloudflare Workers platform.",
+  "description": "(prerelease) IMAP (v4) client for the Cloudflare Workers platform.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Exerra/cf-imap.git"
+  },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240117.0",
     "@types/bun": "latest",
@@ -27,5 +31,9 @@
   "files": [
     "dist/*.js",
     "dist/*.d.ts"
-  ]
+  ],
+  "bugs": {
+    "url": "https://github.com/Exerra/cf-imap/issues"
+  },
+  "homepage": "https://docs.exerra.xyz/docs/npm-packages/cf-imap/v0.x.x/intro"
 }
