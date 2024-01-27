@@ -1,10 +1,9 @@
 {
   "name": "cf-imap",
-  "module": "src/index.ts",
-  "main": "dist/indes.js",
-  "types": "dist/index.d.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "type": "module",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "IMAP (v4) client for the Cloudflare Workers platform.",
   "repository": {
     "type": "git",
