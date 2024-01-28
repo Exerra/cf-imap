@@ -494,6 +494,7 @@ export class CFImap {
     /**
      * Requests a "checkpoint" on the server, a.k.a requests that the server does some houskeeping.
      * Almost never used, but exists in the RFC 3501 spec.
+     * Removed in the RFC 9051 spec, however most providers still support it.
      */
     check = async () => {
         if (!this.socket || !this.reader || !this.writer) throw new Error("Not initialised")
