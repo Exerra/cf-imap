@@ -83,7 +83,7 @@ export class CFImap {
         let responses = await returnvalue.split("\r\n")
 
         // ? Have to test with slow IMAP servers, the speed at which this grabs the read data might be too fast for some.
-        if (!responses[responses.length - 2].startsWith("A1 OK")) throw new Error("A1 netiek atgriezts")
+        if (!responses[responses.length - 2].startsWith("A1 OK")) throw new Error("IMAP server not responding with an A1 OK.", { cause: responses })
 
         if (responses.find(r => r.startsWith("* CAPABILITY")) != undefined) {
             let regex = /^\* CAPABILITY (\w{1,}) .{2,}/.exec(responses[0])
@@ -125,11 +125,11 @@ export class CFImap {
 
         let splitDecoded = decoded.split("\r\n")
 
-        if (splitDecoded.length === 0) throw new Error("Namespaces empty")
+        if (splitDecoded.length === 0) throw new Error("Namespaces empty", { cause: splitDecoded })
 
         let regexExec = regex.exec(splitDecoded[0])
 
-        if (!regexExec) throw new Error("Namespaces - regex issue")
+        if (!regexExec) throw new Error("Namespaces - regex issue. If you believe this to be a bug, please report it.", { cause: { response: splitDecoded[0], regex } })
 
         let namespaces: string[] = []
 
