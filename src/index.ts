@@ -31,6 +31,9 @@ export class CFImap {
         }
     }
 
+    /**
+     * Raw socket used to communicate with the IMAP server. Null if connect function not run yet.
+     */
     socket: ReturnType<typeof connect> | null = null
 
     // TODO: docs (not that necessary, but nice to have)
