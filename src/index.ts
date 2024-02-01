@@ -13,7 +13,7 @@ type Options = {
 
 // TODO: Add documentation when version is 1.x.x
 export class CFImap {
-    options = {
+    private options = {
         host: "",
         port: NaN,
         tls: false,
@@ -43,11 +43,11 @@ export class CFImap {
 
     selectedFolder = ""
 
-    private encoder = new TextEncoder()
-    private decoder = new TextDecoder()
+    encoder = new TextEncoder()
+    decoder = new TextDecoder()
 
-    private writer: WritableStreamDefaultWriter<any> | null = null
-    private reader: ReadableStreamDefaultReader<any> | null = null
+    writer: WritableStreamDefaultWriter<any> | null = null
+    reader: ReadableStreamDefaultReader<any> | null = null
 
     /**
      * Connects to the IMAP server. Must be run after initialising the CFImap class, otherwise nothing will work.
