@@ -11,6 +11,7 @@ type Options = {
     }
 }
 
+// TODO: Add documentation when version is 1.x.x
 export class CFImap {
     options = {
         host: "",
@@ -509,6 +510,23 @@ export class CFImap {
         let responses = decoded.split("\r\n")
 
         return responses
+    }
+
+    /**
+     * Logs the user out of the IMAP session and closes the socket.
+     */
+    logout = async () => {
+        if (!this.socket || !this.reader || !this.writer) throw new Error("Not initialised")
+
+        let query = `A023 LOGOUT\r\n`
+
+        let encoded = await this.encoder.encode(query)
+
+        await this.writer.write(encoded)
+
+        await this.socket.close() // The server should close it automatically, so this is more of a failsafe.
+
+        return true
     }
 }
 
