@@ -10,7 +10,8 @@
     "url": "https://github.com/Exerra/cf-imap.git"
   },
   "scripts": {
-    "build": "tsc"
+    "build": "tsc",
+    "publish": "bun run build && npm publish"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240117.0",
