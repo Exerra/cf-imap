@@ -93,7 +93,6 @@ export class CFImap {
 
             if (regex) {
                 this.session = {
-                    id: "",
                     protocol: regex[1]
                 }
             }   
