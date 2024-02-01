@@ -41,6 +41,9 @@ export class CFImap {
     // ? console log a warning on each function if protocol not imapv4?
     session: { id?: string, protocol?: string } = {}
 
+    /**
+     * Only used to determine if a folder is selected
+     */
     selectedFolder = ""
 
     encoder = new TextEncoder()
@@ -401,7 +404,7 @@ export class CFImap {
 
         if (Object.keys(props).length === 0) throw new Error("No search options given. You must specify at least one search option.")
 
-        if (!this.selectFolder) throw new Error("Folder not selected! Before running this function, run the selectFolder() function!")
+        if (!this.selectedFolder) throw new Error("Folder not selected! Before running this function, run the selectFolder() function!")
 
         let unFlags = [
             "answered",
