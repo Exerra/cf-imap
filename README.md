@@ -26,12 +26,12 @@ const handleRequest = async () => {
 }
 ```
 
-## Closing the connection
+## Logging out
 
-`cf-imap` exposes the socket used to communicate with the IMAP server, so just use that to close it.
+The `logout()` function lets you log out of the session and close the socket. It is recommended to use this as to not run the Worker needlessly (some providers auto-kick you after a while, some keep the connection open indefinitely).
 
 ```ts
-imap.socket?.close()
+await imap.logout()
 ```
 
 ## Documentation
