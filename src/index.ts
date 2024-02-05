@@ -286,20 +286,41 @@ export class CFImap {
      * @param {[ number, number ]} props.limit - Range of emails to fetch.
      * @param {boolean} [props.peek=true] - If true (optional, defaults to true), upon fetch the emails won't get the \Seen flag set.
      */
-    fetchEmails = async ({ folder, byteLimit, limit, peek = true }: FetchEmailsProps) => {
+    fetchEmails = async ({ folder, byteLimit, limit, peek = true, fetchBody }: FetchEmailsProps) => {
         if (!this.socket || !this.reader || !this.writer) throw new Error("Not initialised")
 
         if (!this.selectedFolder) throw new Error("Folder not selected! Before running this function, run the selectFolder() function!")
 
-        let query = `A5 FETCH ${limit.join(":")} (BODY${peek ? ".PEEK" : ""}[TEXT] BODY${peek ? ".PEEK" : ""}[HEADER.FIELDS (SUBJECT FROM TO MESSAGE-ID CONTENT-TYPE DATE)]${byteLimit ?  `<${byteLimit}>` : ""})\r\n`
+        let query = [ // ! Tried to make it a bit more readable, still looks bad.
+            "A5 FETCH " + limit.join(":") + " ",
+            "(",
+            fetchBody && `BODY${peek ? ".PEEK" : ""}[TEXT] `,
+            "BODY" + (peek && ".PEEK"),
+            "[",
+            "HEADER.FIELDS ",
+            "(",
+            "SUBJECT ",
+            "FROM ",
+            "TO ",
+            "MESSAGE-ID ",
+            "CONTENT-TYPE ",
+            "DATE",
+            ")",
+            "]",
+            byteLimit && `<${byteLimit}>`,
+            ")",
+            "\r\n"
+        ].filter(Boolean)
 
-        let encoded = await this.encoder.encode(query)
+        let encoded = await this.encoder.encode(query.join(""))
 
         await this.writer.write(encoded)
         
         let decoded = await this.decoder.decode((await this.reader.read()).value)
 
         let responses = decoded.split("\r\n")
+
+        if (responses[0].startsWith("A5 BAD")) throw new Error("IMAP server returns A5 BAD in fetchEmails function", { cause: { response: responses, query: query.join("") } })
 
         // With large data the server might still be streaming data when we grab it from the TCP stream, This basically ensures that we get to the very end.
         const timeout = async (): Promise<boolean> => {
@@ -379,6 +400,11 @@ export class CFImap {
                 }
 
                 break
+            }
+
+            if (!fetchBody) {
+                emails.push(email)
+                continue
             }
 
             let bodyStartIndex = mutRaw.findIndex(r => r.trim().startsWith("BODY[TEXT]"))

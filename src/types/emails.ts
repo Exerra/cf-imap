@@ -6,7 +6,8 @@ export type FetchEmailsProps = {
     byteLimit?: number,
     limit: [number, number],
     // If true, reading the email won't set the "\Seen" flag
-    peek?: boolean
+    peek?: boolean,
+    fetchBody: boolean
 }
 
 export type Email = {
