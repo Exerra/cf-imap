@@ -3,3 +3,4 @@
 
 # except the dist dir
 !dist/
+!LICENSE
