@@ -1,7 +1,8 @@
 import { connect } from "cloudflare:sockets";
 import type { Email, FetchEmailsProps, SearchEmailsProps } from "./types/emails";
+import { decodeMimeEncodedWords } from "./utils/decodeMime";
 
-type Options = {
+export type Options = {
     host: string,
     port: number,
     tls: boolean,
@@ -310,7 +311,7 @@ export class CFImap {
             byteLimit && `<${byteLimit}>`,
             ")",
             "\r\n"
-        ].filter(Boolean)
+        ].filter(Boolean) // ? why is this here
 
         let encoded = await this.encoder.encode(query.join(""))
 
@@ -365,9 +366,11 @@ export class CFImap {
             // ? Looks a bit ugly, might need to be improved (func that finds?)
             // ? headers field
             let email: Email = {
-                from: emailRaw.find(r => r.toLowerCase().startsWith("from:"))?.slice("from: ".length).trim()!,
-                to: emailRaw.find(r => r.toLowerCase().startsWith("to:"))?.slice("to: ".length).trim()!,
-                subject: emailRaw.find(r => r.toLowerCase().startsWith("subject:"))?.slice("subject: ".length).trim()!,
+                // --- Can be in different encodings ---
+                from: decodeMimeEncodedWords(emailRaw.find(r => r.toLowerCase().startsWith("from:"))?.slice("from: ".length).trim()!),
+                to: decodeMimeEncodedWords(emailRaw.find(r => r.toLowerCase().startsWith("to:"))?.slice("to: ".length).trim()!),
+                subject: decodeMimeEncodedWords(emailRaw.find(r => r.toLowerCase().startsWith("subject:"))?.slice("subject: ".length).trim()!),
+                // -------------------------------------
                 messageID: emailRaw.find(r => r.toLowerCase().startsWith("message-id:"))?.slice("message-id: ".length).trim()!,
                 contentType: emailRaw.find(r => r.toLowerCase().startsWith("content-type:"))?.slice("content-type: ".length).trim()!,
                 date: new Date(emailRaw.find(r => r.toLowerCase().startsWith("date:"))?.slice("date: ".length).trim() as string),
@@ -407,6 +410,7 @@ export class CFImap {
                 continue
             }
 
+            // ! Fails when it has a tab at the beginning (happens with inbox.lv ads)
             let bodyStartIndex = mutRaw.findIndex(r => r.trim().startsWith("BODY[TEXT]"))
 
             mutRaw.splice(0, bodyStartIndex + 1)
