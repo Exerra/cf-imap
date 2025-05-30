@@ -367,9 +367,9 @@ export class CFImap {
             // ? headers field
             let email: Email = {
                 // --- Can be in different encodings ---
-                from: decodeMimeEncodedWords(emailRaw.find(r => r.toLowerCase().startsWith("from:"))?.slice("from: ".length).trim()!),
-                to: decodeMimeEncodedWords(emailRaw.find(r => r.toLowerCase().startsWith("to:"))?.slice("to: ".length).trim()!),
-                subject: decodeMimeEncodedWords(emailRaw.find(r => r.toLowerCase().startsWith("subject:"))?.slice("subject: ".length).trim()!),
+                from: decodeMimeEncodedWords(emailRaw.find(r => r.toLowerCase().startsWith("from:"))?.slice("from: ".length).trim()! || ""),
+                to: decodeMimeEncodedWords(emailRaw.find(r => r.toLowerCase().startsWith("to:"))?.slice("to: ".length).trim()! || ""),
+                subject: decodeMimeEncodedWords(emailRaw.find(r => r.toLowerCase().startsWith("subject:"))?.slice("subject: ".length).trim()! || ""),
                 // -------------------------------------
                 messageID: emailRaw.find(r => r.toLowerCase().startsWith("message-id:"))?.slice("message-id: ".length).trim()!,
                 contentType: emailRaw.find(r => r.toLowerCase().startsWith("content-type:"))?.slice("content-type: ".length).trim()!,
