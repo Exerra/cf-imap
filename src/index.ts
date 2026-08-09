@@ -112,6 +112,24 @@ export class CFImap {
         await this.writer!.write(new TextEncoder().encode(`${tag} ${command}\r\n`))
     }
 
+    /**
+     * Best-effort command send that never hangs: if the write does not settle
+     * within timeoutMs (e.g. the peer reset the connection and workerd keeps
+     * the write pending), returns false. Used to leave IDLE mode on a socket
+     * that may already be dead.
+     */
+    private async sendBestEffort(tag: string, command: string, timeoutMs: number): Promise<boolean> {
+        try {
+            const result = await Promise.race([
+                this.send(tag, command).then(() => "ok" as const),
+                new Promise<"timeout">(resolve => setTimeout(() => resolve("timeout"), timeoutMs))
+            ])
+            return result === "ok"
+        } catch {
+            return false
+        }
+    }
+
     /** True when the session is using IMAP4rev2 semantics (RFC 9051). */
     private get isRev2(): boolean {
         return this.capabilities.includes("IMAP4rev2")
@@ -982,9 +1000,11 @@ export class CFImap {
      * updates (EXISTS, EXPUNGE, FETCH, ...) as they happen. The callback is
      * invoked for each untagged response and may return false to leave IDLE.
      *
+     * IDLE ends cleanly (the connection stays usable) when the callback
+     * returns false, when no updates arrive within timeoutMs (re-issue
+     * idle() to keep watching), or when the server ends IDLE itself.
+     *
      * While IDLE is active, no other command may be issued on this connection.
-     * Note that a read timeout (timeoutMs) ends IDLE when no updates arrive;
-     * re-issue idle() to continue.
      */
     idle = async (onUpdate?: (item: ResponseItem) => boolean | void): Promise<void> => {
         return this.command(async () => {
@@ -995,15 +1015,32 @@ export class CFImap {
             await this.send(tag, "IDLE")
             await this.stream!.readUntilTag(tag, { continuation: true })
 
-            for (;;) {
-                const item = await this.stream!.readItem()
-                if (!item.line.startsWith("*")) continue
-                const keepGoing = onUpdate?.(item)
-                if (keepGoing === false) break
+            let serverEnded = false
+            try {
+                for (;;) {
+                    const item = await this.stream!.readItemNoThrow()
+                    if (item === null) break
+                    if (item.line.startsWith(`${tag} `)) {
+                        serverEnded = true
+                        break
+                    }
+                    if (!item.line.startsWith("*")) continue
+                    const keepGoing = onUpdate?.(item)
+                    if (keepGoing === false) break
+                }
+            } finally {
+                if (!serverEnded) {
+                    // Leave IDLE with DONE, then wait for the tagged
+                    // completion. Best-effort: the socket may already be dead
+                    // (a stuck write there must not hang the request).
+                    const sent = await this.sendBestEffort(tag, "DONE", Math.min(this.options.timeoutMs ?? 30000, 2000))
+                    if (sent) {
+                        try {
+                            await this.stream!.readUntilTag(tag)
+                        } catch { /* connection is gone */ }
+                    }
+                }
             }
-
-            await this.send(tag, "DONE")
-            await this.stream!.readUntilTag(tag)
         })
     }
 

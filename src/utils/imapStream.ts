@@ -34,30 +34,65 @@ export class ImapStream {
     private buffer = new Uint8Array(0)
     private textDecoder = new TextDecoder()
     private timeoutMs: number
+    /**
+     * The in-flight reader.read() promise. Never issue a second read() while
+     * one is pending (the stream throws); on a read timeout the pending
+     * promise is kept here and reused by the next read, so its data is never
+     * lost and the stream stays consistent.
+     */
+    private pendingRead: Promise<ReadableStreamReadResult<any>> | null = null
 
     constructor(reader: ReadableStreamDefaultReader<any>, timeoutMs = 30000) {
         this.reader = reader
         this.timeoutMs = timeoutMs
     }
 
-    private async fillBuffer(): Promise<void> {
-        let timer: ReturnType<typeof setTimeout> | undefined
-        const timeout = new Promise<never>((_, reject) => {
-            timer = setTimeout(() => reject(new Error(`IMAP read timed out after ${this.timeoutMs}ms`)), this.timeoutMs)
-        })
+    private nextRead(): Promise<ReadableStreamReadResult<any>> {
+        if (!this.pendingRead) {
+            const read = this.reader.read()
+            this.pendingRead = read.catch(e => {
+                this.pendingRead = null
+                throw e
+            })
+        }
+        return this.pendingRead
+    }
 
-        let result: ReadableStreamReadResult<any>
+    /** Reads one chunk from the socket, waiting up to timeoutMs. */
+    private async readChunk(): Promise<ReadableStreamReadResult<any> | "timeout"> {
+        let timer: ReturnType<typeof setTimeout> | undefined
+        const timeout = new Promise<"timeout">(resolve => {
+            timer = setTimeout(() => resolve("timeout"), this.timeoutMs)
+        })
         try {
-            result = await Promise.race([this.reader.read(), timeout])
-        } catch (e) {
-            this.close()
-            throw e
+            const result = await Promise.race([this.nextRead(), timeout])
+            if (result === "timeout") return "timeout"
+            this.pendingRead = null
+            return result
         } finally {
             if (timer) clearTimeout(timer)
         }
+    }
 
+    private async fillBuffer(): Promise<void> {
+        const result = await this.readChunk()
+        if (result === "timeout") {
+            this.close()
+            throw new Error(`IMAP read timed out after ${this.timeoutMs}ms`)
+        }
+        this.appendChunk(result)
+    }
+
+    /** Like fillBuffer, but returns false on timeout instead of closing the reader. */
+    private async fillBufferNoThrow(): Promise<boolean> {
+        const result = await this.readChunk()
+        if (result === "timeout") return false
+        this.appendChunk(result)
+        return true
+    }
+
+    private appendChunk(result: ReadableStreamReadResult<any>): void {
         if (result.done) throw new Error("IMAP connection closed by server")
-
         const newBuf = new Uint8Array(this.buffer.length + result.value.length)
         newBuf.set(this.buffer)
         newBuf.set(result.value, this.buffer.length)
@@ -82,6 +117,22 @@ export class ImapStream {
      * with a {N} literal marker together with the N raw literal bytes.
      */
     async readItem(): Promise<ResponseItem> {
+        const item = await this.readItemInternal(false)
+        return item!
+    }
+
+    /**
+     * Like readItem, but a read timeout while waiting for a line is not fatal:
+     * returns null instead (the reader is NOT cancelled, the stream stays
+     * usable). Timeouts while waiting for literal bytes are still fatal — a
+     * partially-consumed literal leaves the stream corrupt. Used by IDLE,
+     * where silence between responses is normal.
+     */
+    async readItemNoThrow(): Promise<ResponseItem | null> {
+        return this.readItemInternal(true)
+    }
+
+    private async readItemInternal(noThrow: boolean): Promise<ResponseItem | null> {
         for (;;) {
             const idx = this.indexOfCRLF()
             if (idx !== -1) {
@@ -101,7 +152,11 @@ export class ImapStream {
 
                 return { line, literal: null }
             }
-            await this.fillBuffer()
+            if (noThrow) {
+                if (!(await this.fillBufferNoThrow())) return null
+            } else {
+                await this.fillBuffer()
+            }
         }
     }
 
