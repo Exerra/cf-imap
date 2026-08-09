@@ -48,6 +48,29 @@ function parseAppendUid(line: string): AppendResult | null {
     return null
 }
 
+/**
+ * Decodes the XOAUTH2 failure challenge: a `+ <base64 JSON>` continuation
+ * line carrying {status, schemes, scope} (Google's XOAUTH2 spec; RFC 7628
+ * OAUTHBEARER is analogous). Returns a human-readable description.
+ */
+function decodeXoauth2Error(line: string): string {
+    const b64 = line.slice(1).trim()
+    try {
+        const json = JSON.parse(atob(b64)) as { status?: string, schemes?: string, scope?: string } | null
+        if (json && (json.status || json.schemes || json.scope)) {
+            const parts: string[] = []
+            if (json.status) parts.push(`status ${json.status}`)
+            if (json.schemes) parts.push(`schemes ${json.schemes}`)
+            if (json.scope) parts.push(`scope ${json.scope}`)
+            const hint = json.status === "401" || json.status === "400"
+                ? " — the access token is expired or invalid; refresh it (or re-run the OAuth flow) and reconnect"
+                : ""
+            return `OAuth2 error ${parts.join(", ")}${hint}`
+        }
+    } catch { /* not JSON — fall through */ }
+    return `OAuth2 challenge: ${b64 || "(empty)"}`
+}
+
 export class CFImap {
     private options: Options
     private socket: ReturnType<typeof connect> | null = null
@@ -128,8 +151,9 @@ export class CFImap {
      * initialising the CFImap class, otherwise nothing will work.
      *
      * Handles, in order: greeting (incl. BYE rejection), STARTTLS (RFC 9051
-     * §6.2.1), authentication (AUTHENTICATE PLAIN with SASL-IR, falling back
-     * to LOGIN when the server allows it — RFC 9051 §6.2.2/§6.2.3) and
+     * §6.2.1), authentication (AUTHENTICATE XOAUTH2 with an OAuth token when
+     * configured, otherwise AUTHENTICATE PLAIN with SASL-IR falling back to
+     * LOGIN when the server allows it — RFC 9051 §6.2.2/§6.2.3) and
      * ENABLE IMAP4rev2 when the server advertises both versions (Appendix A).
      */
     connect = async (): Promise<void> => {
@@ -202,17 +226,37 @@ export class CFImap {
     }
 
     /**
-     * Authenticates the session. Tries AUTHENTICATE PLAIN (with SASL initial
-     * response) when the server advertises AUTH=PLAIN, and falls back to LOGIN
-     * — the "last resort" per RFC 9051 §6.2.3 — unless the server advertises
+     * Authenticates the session.
+     *
+     * When an OAuth 2.0 access token is configured (auth.accessToken or
+     * auth.getAccessToken) and the server advertises AUTH=XOAUTH2, the
+     * XOAUTH2 SASL mechanism is used — required by Gmail, Microsoft 365 /
+     * Outlook.com and other modern providers that refuse passwords.
+     *
+     * Otherwise: AUTHENTICATE PLAIN (with SASL initial response) when the
+     * server advertises AUTH=PLAIN, falling back to LOGIN — the "last
+     * resort" per RFC 9051 §6.2.3 — unless the server advertises
      * LOGINDISABLED, in which case LOGIN is forbidden.
      */
     private async authenticate(): Promise<void> {
+        const auth = this.options.auth
+        const supportsXoauth2 = this.capabilities.includes("AUTH=XOAUTH2")
+        const hasToken = "accessToken" in auth || "getAccessToken" in auth
+
+        if (supportsXoauth2 && hasToken) {
+            await this.authenticateXoauth2()
+            return
+        }
+
+        if (!("password" in auth)) {
+            throw new Error("An OAuth access token (auth.accessToken / auth.getAccessToken) was provided, but the server does not advertise the AUTH=XOAUTH2 mechanism and there is no password to fall back to. Provide a password instead, or connect to a server that supports XOAUTH2.")
+        }
+
         const loginDisabled = this.capabilities.includes("LOGINDISABLED")
 
         if (this.capabilities.includes("AUTH=PLAIN")) {
             const tag = this.nextTag()
-            const initial = bytesToBase64(new TextEncoder().encode(`\u0000${this.options.auth.username}\u0000${this.options.auth.password}`))
+            const initial = bytesToBase64(new TextEncoder().encode(`\u0000${auth.username}\u0000${auth.password}`))
             await this.send(tag, `AUTHENTICATE PLAIN ${initial}`)
             try {
                 const { tagged } = await this.stream!.readUntilTag(tag)
@@ -226,15 +270,85 @@ export class CFImap {
                 if (loginDisabled || this.capabilities.includes("LOGINDISABLED")) throw e
             }
         } else if (loginDisabled) {
-            throw new Error("The server advertises LOGINDISABLED and no usable authentication mechanism (AUTH=PLAIN) is available. Cannot authenticate.")
+            const oauthHint = supportsXoauth2
+                ? " The server requires OAuth 2.0 (AUTH=XOAUTH2) — Gmail and Microsoft accounts no longer accept passwords. Provide a token via auth.accessToken or auth.getAccessToken."
+                : ""
+            throw new Error(`The server advertises LOGINDISABLED and no usable authentication mechanism (AUTH=PLAIN) is available. Cannot authenticate.${oauthHint}`)
         }
 
         const tag = this.nextTag()
-        await this.send(tag, `LOGIN ${quote(this.options.auth.username)} ${quote(this.options.auth.password)}`)
-        const { tagged } = await this.stream!.readUntilTag(tag)
+        await this.send(tag, `LOGIN ${quote(auth.username)} ${quote(auth.password)}`)
+        try {
+            const { tagged } = await this.stream!.readUntilTag(tag)
 
-        const loginCaps = parseCapabilities(tagged.line)
-        if (loginCaps) this.capabilities = loginCaps
+            const loginCaps = parseCapabilities(tagged.line)
+            if (loginCaps) this.capabilities = loginCaps
+        } catch (e) {
+            if (supportsXoauth2 && e instanceof ImapError) {
+                throw new ImapError(e.status, e.tag, `${e.messageText} (The server requires OAuth 2.0 (AUTH=XOAUTH2) — Gmail and Microsoft accounts no longer accept passwords. Provide a token via auth.accessToken or auth.getAccessToken.)`, e.untagged)
+            }
+            throw e
+        }
+    }
+
+    /**
+     * Authenticates via the XOAUTH2 SASL mechanism with an OAuth 2.0 access
+     * token. Uses SASL-IR (RFC 4959) when advertised, otherwise answers the
+     * server's challenge with the initial response.
+     *
+     * On failure the server sends a `+ <base64 JSON>` challenge (error
+     * status/schemes/scope); per the XOAUTH2 protocol the client MUST
+     * acknowledge it with an empty line before the server responds with the
+     * tagged NO — without that acknowledgment the exchange deadlocks.
+     */
+    private async authenticateXoauth2(): Promise<void> {
+        const auth = this.options.auth
+        let token: string
+        if ("accessToken" in auth) {
+            token = auth.accessToken
+        } else if ("getAccessToken" in auth) {
+            token = await auth.getAccessToken()
+        } else {
+            throw new Error("No OAuth access token configured")
+        }
+
+        const initial = bytesToBase64(new TextEncoder().encode(`user=${auth.username}\u0001auth=Bearer ${token}\u0001\u0001`))
+        const saslIr = this.capabilities.includes("SASL-IR")
+
+        const tag = this.nextTag()
+
+        if (saslIr) {
+            await this.send(tag, `AUTHENTICATE XOAUTH2 ${initial}`)
+        } else {
+            // No SASL-IR: send the mechanism name first and answer the
+            // server's continuation prompt with the initial response.
+            await this.send(tag, "AUTHENTICATE XOAUTH2")
+            await this.stream!.readUntilTag(tag, { continuation: true })
+            await this.writer!.write(new TextEncoder().encode(`${initial}\r\n`))
+        }
+
+        // continuation: true short-circuits on a "+" line. After a SASL
+        // initial response, a "+" can only be an XOAUTH2 failure challenge
+        // (base64 JSON error): acknowledge it with an empty line, then read
+        // the tagged NO and surface the decoded error.
+        const { tagged } = await this.stream!.readUntilTag(tag, { continuation: true })
+
+        if (tagged.line.startsWith("+")) {
+            const oauthError = decodeXoauth2Error(tagged.line)
+            await this.writer!.write(new TextEncoder().encode("\r\n"))
+            try {
+                await this.stream!.readUntilTag(tag)
+            } catch (e) {
+                if (e instanceof ImapError) {
+                    throw new ImapError(e.status, e.tag, `${e.messageText} (${oauthError})`, e.untagged)
+                }
+                throw e
+            }
+            return
+        }
+
+        const caps = parseCapabilities(tagged.line)
+        if (caps) this.capabilities = caps
     }
 
     /**

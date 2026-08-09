@@ -7,9 +7,25 @@ export type Options = {
      * TLS via the STARTTLS command (RFC 9051 §6.2.1).
      */
     tls: boolean,
+    /**
+     * Credentials. Either a plain password (AUTHENTICATE PLAIN / LOGIN) or
+     * an OAuth 2.0 access token (AUTHENTICATE XOAUTH2, RFC 7628-style — used
+     * by Gmail, Microsoft 365/Outlook.com, Yahoo, Dovecot, ...).
+     *
+     * The token is resolved lazily at connect() time: `accessToken` is used
+     * as-is, `getAccessToken` is invoked (and awaited) so you can refresh the
+     * token right before connecting. The library never acquires tokens itself
+     * — run the OAuth flow in your own code.
+     */
     auth: {
         username: string,
         password: string
+    } | {
+        username: string,
+        accessToken: string
+    } | {
+        username: string,
+        getAccessToken: () => string | Promise<string>
     },
     /** Read timeout for IMAP responses in milliseconds. Defaults to 30000. */
     timeoutMs?: number
