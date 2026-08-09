@@ -1,185 +1,173 @@
-import { connect } from "cloudflare:sockets";
-import type { Email, FetchEmailsProps, SearchEmailsProps } from "./types/emails";
-import { decodeMimeEncodedWords } from "./utils/decodeMime";
+import { connect } from "cloudflare:sockets"
+import type { Email, Attachment, FetchEmailsProps, SearchEmailsProps, MailboxInfo, Folder, Namespace, Options } from "./types/emails"
+import { ImapStream, ImapError } from "./utils/imapStream"
+import { parseImapList, quote, formatInternalDate, splitResponseCodes } from "./utils/imapList"
+import { decodeMimeEncodedWords } from "./utils/decodeMime"
+import { parseHeaders, parseAddresses, parseMime, extractContent } from "./utils/mime"
+import { buildSearchQuery } from "./utils/search"
 
-export type Options = {
-    host: string,
-    port: number,
-    tls: boolean,
-    auth: {
-        username: string,
-        password: string
-    }
-}
+export { ImapError }
+export type { Options, Email, Attachment, FetchEmailsProps, SearchEmailsProps, MailboxInfo, Folder, Namespace }
 
-// TODO: Add documentation when version is 1.x.x
 export class CFImap {
-    private options = {
-        host: "",
-        port: NaN,
-        tls: false,
-        auth: {
-            username: "",
-            password: ""
-        }
-    } as Options
+    private options: Options
+    private socket: ReturnType<typeof connect> | null = null
+    private stream: ImapStream | null = null
+    private writer: WritableStreamDefaultWriter<any> | null = null
+    private tagCounter = 0
 
-    constructor({ host, port, tls, auth }: Options) {
-        this.options = {
-            host,
-            port,
-            tls,
-            auth
-        }
-    }
-
-    /**
-     * Raw socket used to communicate with the IMAP server. Null if connect function not run yet.
-     */
-    socket: ReturnType<typeof connect> | null = null
-
-    // TODO: docs (not that necessary, but nice to have)
-    // ? console log a warning on each function if protocol not imapv4?
     session: { id?: string, protocol?: string } = {}
+    /** Capabilities advertised by the server, e.g. ["IMAP4rev1", "UIDPLUS"] */
+    capabilities: string[] = []
 
     /**
      * Only used to determine if a folder is selected
      */
     selectedFolder = ""
 
-    encoder = new TextEncoder()
-    decoder = new TextDecoder()
+    constructor(options: Options) {
+        this.options = options
+    }
 
-    writer: WritableStreamDefaultWriter<any> | null = null
-    reader: ReadableStreamDefaultReader<any> | null = null
+    private requireConnection() {
+        if (!this.socket || !this.stream || !this.writer) {
+            throw new Error("Not connected to an IMAP server. Run the connect() function first.")
+        }
+    }
+
+    private requireFolder() {
+        if (!this.selectedFolder) {
+            throw new Error("Folder not selected! Before running this function, run the selectFolder() function.")
+        }
+    }
+
+    private nextTag(): string {
+        return `A${++this.tagCounter}`
+    }
+
+    private async send(tag: string, command: string) {
+        await this.writer!.write(new TextEncoder().encode(`${tag} ${command}\r\n`))
+    }
 
     /**
-     * Connects to the IMAP server. Must be run after initialising the CFImap class, otherwise nothing will work.
-     * 
-     * @async
-     * @returns {void}
+     * Connects to the IMAP server and authenticates. Must be run after
+     * initialising the CFImap class, otherwise nothing will work.
      */
-    connect = async () => {
-        let options: SocketOptions = {
-            allowHalfOpen: true
-        }
+    connect = async (): Promise<void> => {
+        const socketOptions: SocketOptions = { allowHalfOpen: true }
+        if (this.options.tls) socketOptions.secureTransport = "starttls"
 
-        if (this.options.tls) options.secureTransport = "starttls"
-
-        this.socket = await connect({ hostname: this.options.host, port: this.options.port }, options)
+        let socket = await connect({ hostname: this.options.host, port: this.options.port }, socketOptions)
 
         if (this.options.tls) {
-            const secureSocket = this.socket.startTls()
-
-            this.socket = secureSocket
+            socket = socket.startTls()
         }
 
+        this.socket = socket
+        this.writer = socket.writable.getWriter()
+        this.stream = new ImapStream(socket.readable.getReader(), this.options.timeoutMs)
 
-        this.writer = this.socket.writable.getWriter()
-        this.reader = this.socket.readable.getReader()
+        const greeting = await this.stream!.readItem()
+        const greetingLine = greeting.line
 
-        let chunks: string[] = []
+        if (!greetingLine.startsWith("*")) {
+            throw new Error(`Unexpected IMAP greeting: ${greetingLine}`, { cause: greeting })
+        }
 
-        await this.decoder.decode((await this.reader.read()).value)
+        const greetingCaps = /\[CAPABILITY ([^\]]*)\]/.exec(greetingLine)
+        if (greetingCaps) {
+            this.capabilities = greetingCaps[1]!.trim().split(/\s+/).filter(Boolean)
+        }
 
-        const encoded = this.encoder.encode(`A1 login ${this.options.auth.username} ${this.options.auth.password}\r\n`)
+        // * PREAUTH means the session is already authenticated (e.g. TLS client certs)
+        if (!greetingLine.startsWith("* PREAUTH")) {
+            const tag = this.nextTag()
+            await this.send(tag, `LOGIN ${quote(this.options.auth.username)} ${quote(this.options.auth.password)}`)
+            const { tagged } = await this.stream!.readUntilTag(tag)
 
-        await this.writer.write(encoded)
-
-        let returnvalue = await this.decoder.decode((await this.reader.read()).value)
-
-        let responses = await returnvalue.split("\r\n")
-
-        // ? Have to test with slow IMAP servers, the speed at which this grabs the read data might be too fast for some.
-        if (!responses[responses.length - 2].startsWith("A1 OK")) throw new Error("IMAP server not responding with an A1 OK.", { cause: responses })
-
-        if (responses.find(r => r.startsWith("* CAPABILITY")) != undefined) {
-            let regex = /^\* CAPABILITY (\w{1,}) .{2,}/.exec(responses[0])
-
-            if (regex) {
-                this.session = {
-                    protocol: regex[1]
-                }
-            }   
-        } else {
-            let regex = /^A1 OK \[CAPABILITY (\w{1,}) .{2,}(?=])\] User logged in SESSIONID=<(.{1,}(?=>))>/.exec(responses[0])
-
-            if (regex) {
-                this.session = {
-                    id: regex[2],
-                    protocol: regex[1]
-                }
+            const loginCaps = /\[CAPABILITY ([^\]]*)\]/.exec(tagged.line)
+            if (loginCaps) {
+                this.capabilities = loginCaps[1]!.trim().split(/\s+/).filter(Boolean)
             }
         }
 
-        return
-
+        const protocol = this.capabilities.find(c => c.toLowerCase().startsWith("imap4"))
+        this.session = {
+            id: /SESSIONID=<([^>]+)>/.exec(greetingLine)?.[1],
+            protocol
+        }
     }
 
     /**
-     * Returns the prefix and hierarchy delimiter to personal and shared namespaces that the logged in user has access to. Should be the second ran function.
+     * Returns the prefixes and hierarchy delimiters of the personal, other
+     * and shared namespaces available to the logged in user.
      */
-    getNamespaces = async () => {
-        if (!this.socket || !this.reader || !this.writer) throw new Error("Not connected to an IMAP server")
+    getNamespaces = async (): Promise<{ personal: Namespace[], other: Namespace[], shared: Namespace[] }> => {
+        this.requireConnection()
 
-        let encoded = await this.encoder.encode("n namespace\r\n")
+        const tag = this.nextTag()
+        await this.send(tag, "NAMESPACE")
+        const { items } = await this.stream!.readUntilTag(tag)
 
-        await this.writer.write(encoded)
+        for (const item of items) {
+            if (!item.line.startsWith("* NAMESPACE")) continue
 
-        let decoded = await this.decoder.decode((await this.reader.read()).value)
+            const list = parseImapList(item.line.slice("* NAMESPACE".length).trim())
+            const mapGroup = (v: unknown): Namespace[] => {
+                if (v === "NIL" || !Array.isArray(v)) return []
+                return v.map(pair => {
+                    const arr = pair as unknown[]
+                    return {
+                        prefix: String(arr[0] ?? ""),
+                        delimiter: String(arr[1] ?? "")
+                    }
+                })
+            }
 
-        let regex = new RegExp(/\* NAMESPACE \(\((.{1,})\)\) (.{1,}) (.{1,})/)
+            return {
+                personal: mapGroup(list[0]),
+                other: mapGroup(list[1]),
+                shared: mapGroup(list[2])
+            }
+        }
 
-        let splitDecoded = decoded.split("\r\n")
-
-        if (splitDecoded.length === 0) throw new Error("Namespaces empty", { cause: splitDecoded })
-
-        let regexExec = regex.exec(splitDecoded[0])
-
-        if (!regexExec) throw new Error("Namespaces - regex issue. If you believe this to be a bug, please report it.", { cause: { response: splitDecoded[0], regex } })
-
-        let namespaces: string[] = []
-
-        namespaces.push(regexExec[1].split(" ")[0].replaceAll(`"`, ""))
-
-        return namespaces
+        throw new Error("No NAMESPACE response received", { cause: items })
     }
 
     /**
-     * Returns all folders in the specified namespace along with any flags.
-     * @param {string} namespace - From which namespace to list folders
-     * @param {string} filter - String filter
+     * Returns all folders in the specified namespace along with their flags.
+     * @param {string} namespace - From which namespace to list folders (usually "" or the prefix from getNamespaces())
+     * @param {string} filter - Pattern filter, e.g. "*" or "INBOX*"
      */
-    getFolders = async (namespace: string, filter = "*") => {
-        if (!this.socket || !this.reader || !this.writer) throw new Error("Not connected to an IMAP server")
+    getFolders = async (namespace: string, filter = "*"): Promise<Folder[]> => {
+        this.requireConnection()
 
-        let encoded = await this.encoder.encode(`A1 list "${namespace}" "${filter}"\r\n`)
+        const tag = this.nextTag()
+        await this.send(tag, `LIST ${quote(namespace)} ${quote(filter)}`)
+        const { items } = await this.stream!.readUntilTag(tag)
 
-        await this.writer.write(encoded)
+        const folders: Folder[] = []
 
-        let decoded = await this.decoder.decode((await this.reader.read()).value)
+        for (const item of items) {
+            if (!item.line.startsWith("* LIST")) continue
 
-        let responses = decoded.split("\r\n")
+            const list = parseImapList(item.line.slice("* LIST".length).trim())
+            if (list.length < 3) continue
 
-        let folders: Array<{ name: string, delimiter: string, attributes: string[] }> = []
+            const attrs = list[0]
+            const attributes = Array.isArray(attrs)
+                ? attrs.map(a => String(a).replace(/^\\/, ""))
+                : []
 
-        let regex = new RegExp(/\* LIST \((?<attributes>.{1,})\) (?<delimiter>.{1,}) (?<name>.{1,})/)
-
-        for (const response of responses) {
-            let exec = regex.exec(response)
-
-            if (!exec?.groups) continue
-
-            let attributes = exec?.groups.attributes.split("\\").filter(attr => attr !== "")
-
-            for (let i in attributes) {
-                attributes[i] = attributes[i].trim()
+            let name = String(list[2] ?? "")
+            if (/\{\d+\+?\}$/.test(item.line) && item.literal) {
+                name = new TextDecoder("utf-8").decode(item.literal)
             }
 
             folders.push({
-                name: exec?.groups.name.trim(),
-                delimiter: exec?.groups.delimiter.trim(),
-                attributes: attributes
+                name,
+                delimiter: list[1] === "NIL" ? "" : String(list[1]),
+                attributes
             })
         }
 
@@ -187,235 +175,214 @@ export class CFImap {
     }
 
     /**
-     * Selects a folder for use in the email GET & FETCH functions. Must be run before those commands, otherwise those commands will throw an error.
+     * Selects a folder for use in the email GET & FETCH functions. Must be
+     * run before those commands (or pass the folder prop to fetchEmails()).
      * @param folder - Selectable folder
      */
-    selectFolder = async (folder: string) => {
-        if (!this.socket || !this.reader || !this.writer) throw new Error("Not initialised")
+    selectFolder = async (folder: string): Promise<MailboxInfo> => {
+        this.requireConnection()
 
         if (!folder) throw new Error("Folder not given")
 
-        await this.writer.write(await this.encoder.encode(`g21 SELECT "${folder}"\r\n`))
+        const tag = this.nextTag()
+        await this.send(tag, `SELECT ${quote(folder)}`)
+        const { items, tagged } = await this.stream!.readUntilTag(tag)
 
-        let decoded = await this.decoder.decode((await this.reader.read()).value)
+        const info: MailboxInfo = {
+            emails: 0,
+            recent: 0,
+            flags: [],
+            permanentFlags: [],
+            readOnly: false
+        }
 
-        let responses = decoded.split("\r\n")
-
-        let metadata: { [key: string]: any } = {}
-
-        for (let response of responses) {
-            if (response.startsWith("*")) response = response.replace("* ", "")
-
-            if (response.endsWith("EXISTS")) metadata.emails = parseInt(response.split(" ")[0])
-
-            if (response.endsWith("RECENT")) metadata.recent = parseInt(response.split(" ")[0])
-
-            if (response.startsWith("FLAGS")) {
-                let regex = new RegExp(/FLAGS \((?<flags>.{1,})\)/)
-
-                let exec = regex.exec(response)
-
-                if (!exec) continue
-                if (!exec.groups) continue
-
-                let flags = []
-
-                for (let flag of exec.groups.flags.split(" ")) {
-                    if (!flag.startsWith("\\")) continue
-
-                    flags.push(flag.replace("\\", ""))
-                }
-
-                metadata.flags = flags
-            }
-
-            if (response.startsWith("OK")) {
-                let regex = new RegExp(/OK \[(?<kv>.{1,})\] (?<status>.{1,})/)
-
-                let exec = regex.exec(response)
-
-                if (!exec) continue
-                if (!exec.groups) continue
-
-                let { kv, status } = exec.groups
-
-                if (status != "Ok") continue
-
-                if (kv.startsWith("PERMANENTFLAGS")) {
-                    let flags = []
-
-                    let flagExec = new RegExp(/PERMANENTFLAGS \((?<flags>.{1,})\)/).exec(kv)
-
-                    if (!flagExec) continue
-                    if (!flagExec.groups) continue
-
-                    for (let flag of flagExec.groups.flags.split(" ")) {
-                        if (!flag.startsWith("\\")) continue
-
-                        flags.push(flag.replace("\\", ""))
+        const applyCodes = (line: string) => {
+            const codes = /\[([^\]]*)\]/.exec(line)
+            if (!codes) return
+            const tokens = splitResponseCodes(codes[1])
+            for (let i = 0; i < tokens.length; i++) {
+                const t = tokens[i]!.toUpperCase()
+                if (t === "UIDVALIDITY") info.uidValidity = parseInt(tokens[i + 1]!)
+                else if (t === "UIDNEXT") info.uidNext = parseInt(tokens[i + 1]!)
+                else if (t === "UNSEEN") info.unseen = parseInt(tokens[i + 1]!)
+                else if (t === "READ-ONLY") info.readOnly = true
+                else if (t === "READ-WRITE") info.readOnly = false
+                else if (t === "PERMANENTFLAGS") {
+                    const next = tokens[i + 1]
+                    if (next?.startsWith("(")) {
+                        info.permanentFlags = next.slice(1, -1).split(/\s+/).filter(Boolean).map(f => f.replace(/^\\/, ""))
                     }
-
-                    metadata.permanentFlags = flags
-                    continue
-                }
-
-                let split = kv.split(" ")
-
-                try {
-                    let parsed = parseInt(split[1])
-
-                    if (isNaN(parsed)) metadata[split[0].toLowerCase()] = split[1]
-
-                    metadata[split[0].toLowerCase()] = parsed
-                } catch (e) {
-                    throw new Error("Test")
                 }
             }
         }
 
-        this.selectedFolder = folder
+        for (const item of items) {
+            const line = item.line
 
-        return metadata
-    }
-
-    /**
-     * Fetches emails from a folder specified by the selectFolder() function.
-     * 
-     * @async
-     * @param {Object} props - Props
-     * @param {number} [props.byteLimit] - Maximum size of the emails to fetch (optional, not recommended)
-     * @param {[ number, number ]} props.limit - Range of emails to fetch.
-     * @param {boolean} [props.peek=true] - If true (optional, defaults to true), upon fetch the emails won't get the \Seen flag set.
-     */
-    fetchEmails = async ({ folder, byteLimit, limit, peek = true, fetchBody }: FetchEmailsProps) => {
-        if (!this.socket || !this.reader || !this.writer) throw new Error("Not initialised")
-
-        if (!this.selectedFolder) throw new Error("Folder not selected! Before running this function, run the selectFolder() function!")
-
-        let query = [ // ! Tried to make it a bit more readable, still looks bad.
-            "A5 FETCH " + limit.join(":") + " ",
-            "(",
-            fetchBody && `BODY${peek ? ".PEEK" : ""}[TEXT] `,
-            "BODY" + (peek && ".PEEK"),
-            "[",
-            "HEADER.FIELDS ",
-            "(",
-            "SUBJECT ",
-            "FROM ",
-            "TO ",
-            "MESSAGE-ID ",
-            "CONTENT-TYPE ",
-            "DATE",
-            ")",
-            "]",
-            byteLimit && `<${byteLimit}>`,
-            ")",
-            "\r\n"
-        ].filter(Boolean) // ? why is this here
-
-        let encoded = await this.encoder.encode(query.join(""))
-
-        await this.writer.write(encoded)
-        
-        let decoded = await this.decoder.decode((await this.reader.read()).value)
-
-        let responses = decoded.split("\r\n")
-
-        if (responses[0].startsWith("A5 BAD")) throw new Error("IMAP server returns A5 BAD in fetchEmails function", { cause: { response: responses, query: query.join("") } })
-
-        // With large data the server might still be streaming data when we grab it from the TCP stream, This basically ensures that we get to the very end.
-        const timeout = async (): Promise<boolean> => {
-            // ! Might fail when the response is a failure, might need error checking for that 
-            // @ts-ignore findLastIndex exists on string[], however the tsc compiler thinks it doesn't
-            if (responses.findLastIndex(r => r.startsWith("A5 OK")) == -1) {
-                if (!this.reader) return false // mostly so it doesnt scream about this.reader being possibly undefined
-
-                decoded = await this.decoder.decode((await this.reader.read()).value)
-
-                responses = [...responses, ...decoded.split("\r\n")]
-
-                return timeout()
-            }
-
-            return true
-        }
-
-        await timeout()
-
-        let emails: Email[] = []
-        let emailsRaw = [];
-        let currentEmail = [];
-
-        // Seperates the emails into seperate arrays
-        for (let line of responses) {
-            // "*" is sent by the server as a sort of "start section" kind of thing
-            if (line.startsWith('*')) {
-                if (currentEmail.length > 0) {
-                    emailsRaw.push(currentEmail);
-                    currentEmail = [];
-                }
-            }
-            currentEmail.push(line);
-        }
-
-        if (currentEmail.length > 0) {
-            emailsRaw.push(currentEmail);
-        }
-
-        for (let emailRaw of emailsRaw) {
-            // ? Looks a bit ugly, might need to be improved (func that finds?)
-            // ? headers field
-            let email: Email = {
-                // --- Can be in different encodings ---
-                from: decodeMimeEncodedWords(emailRaw.find(r => r.toLowerCase().startsWith("from:"))?.slice("from: ".length).trim()! || ""),
-                to: decodeMimeEncodedWords(emailRaw.find(r => r.toLowerCase().startsWith("to:"))?.slice("to: ".length).trim()! || ""),
-                subject: decodeMimeEncodedWords(emailRaw.find(r => r.toLowerCase().startsWith("subject:"))?.slice("subject: ".length).trim()! || ""),
-                // -------------------------------------
-                messageID: emailRaw.find(r => r.toLowerCase().startsWith("message-id:"))?.slice("message-id: ".length).trim()!,
-                contentType: emailRaw.find(r => r.toLowerCase().startsWith("content-type:"))?.slice("content-type: ".length).trim()!,
-                date: new Date(emailRaw.find(r => r.toLowerCase().startsWith("date:"))?.slice("date: ".length).trim() as string),
-                raw: emailRaw.join("\n"),
-                body: ""
-            }
-
-            let mutRaw = emailRaw
-
-            // Removes the useless junk at the end of the response. Goes backwards (starts at the last element and works its way up)
-            for (let i = mutRaw.length; i--; i < 0) {
-                let el = mutRaw[i]
-
-                if (el === "") {
-                    mutRaw.pop()
-
-                    continue
-                }
-
-                if (el.startsWith("A5")) {
-                    mutRaw.pop()
-
-                    continue
-                }
-
-                if (el === ")") {
-                    mutRaw.pop()
-
-                    continue
-                }
-
-                break
-            }
-
-            if (!fetchBody) {
-                emails.push(email)
+            const exists = /^\* (\d+) EXISTS$/.exec(line)
+            if (exists) {
+                info.emails = parseInt(exists[1])
                 continue
             }
 
-            // ! Fails when it has a tab at the beginning (happens with inbox.lv ads)
-            let bodyStartIndex = mutRaw.findIndex(r => r.trim().startsWith("BODY[TEXT]"))
+            const recent = /^\* (\d+) RECENT$/.exec(line)
+            if (recent) {
+                info.recent = parseInt(recent[1])
+                continue
+            }
 
-            mutRaw.splice(0, bodyStartIndex + 1)
+            if (line.startsWith("* FLAGS")) {
+                const list = parseImapList(line.slice("* FLAGS".length).trim())
+                if (Array.isArray(list[0])) {
+                    info.flags = list[0].map(f => String(f).replace(/^\\/, ""))
+                }
+                continue
+            }
 
-            email.body = mutRaw.join("\n")
+            // Dovecot and others send UIDVALIDITY/UIDNEXT/PERMANENTFLAGS etc.
+            // as untagged "* OK [...]" lines
+            if (line.startsWith("* OK [")) applyCodes(line)
+        }
+
+        applyCodes(tagged.line)
+
+        this.selectedFolder = folder
+        return info
+    }
+
+    /**
+     * Fetches emails from a folder specified by the selectFolder() function
+     * (or via the folder prop).
+     *
+     * @param {Object} props - Props
+     * @param {number} [props.byteLimit] - Maximum size of the emails to fetch (optional, not recommended)
+     * @param {[ number, number ] | number} props.limit - Range of sequence numbers to fetch (or a single one)
+     * @param {boolean} [props.peek=true] - If true (default), fetching won't set the \Seen flag
+     * @param {boolean} [props.fetchBody=true] - If true (default), the full message is fetched and parsed
+     */
+    fetchEmails = async ({ folder, limit, fetchBody = true, byteLimit, peek = true, useUid = false }: FetchEmailsProps): Promise<Email[]> => {
+        this.requireConnection()
+
+        if (folder && folder !== this.selectedFolder) {
+            await this.selectFolder(folder)
+        } else if (!folder) {
+            this.requireFolder()
+        }
+
+        const range = Array.isArray(limit) ? limit.join(":") : String(limit)
+        const bodyCommand = fetchBody
+            ? `BODY${peek ? ".PEEK" : ""}[]${byteLimit ? ` <${byteLimit}>` : ""}`
+            : `BODY${peek ? ".PEEK" : ""}[HEADER.FIELDS (SUBJECT FROM TO CC MESSAGE-ID CONTENT-TYPE DATE)]`
+
+        const tag = this.nextTag()
+        await this.send(tag, `${useUid ? "UID " : ""}FETCH ${range} (UID FLAGS INTERNALDATE RFC822.SIZE ${bodyCommand})`)
+        const { items } = await this.stream!.readUntilTag(tag)
+
+        const emails: Email[] = []
+        const LIT = "\u0000"
+        const tokens: string[] = []
+
+        for (const item of items) {
+            const m = /\{(\d+)\+?\}$/.exec(item.line)
+            if (m && item.literal) {
+                tokens.push(item.line.slice(0, -m[0].length))
+                tokens.push(LIT + new TextDecoder("utf-8").decode(item.literal))
+            } else {
+                tokens.push(item.line)
+            }
+        }
+
+        let i = 0
+        while (i < tokens.length) {
+            const opening = /^\* (\d+) FETCH \(([\s\S]*)$/.exec(tokens[i]!)
+            if (!opening) {
+                i++
+                continue
+            }
+
+            const seq = parseInt(opening[1])
+            i++
+
+            // Collect the fetch data until the standalone closing paren
+            let data = opening[2] ?? ""
+            const parts: { section: "header" | "body" | null, content: string }[] = []
+            let pendingSection: "header" | "body" | null = null
+            if (/BODY\[HEADER/i.test(data)) pendingSection = "header"
+            else if (/BODY\[/i.test(data)) pendingSection = "body"
+
+            for (; i < tokens.length; i++) {
+                const token = tokens[i]!
+                if (token.startsWith(LIT)) {
+                    if (pendingSection) parts.push({ section: pendingSection, content: token.slice(LIT.length) })
+                    pendingSection = null
+                    continue
+                }
+                if (token.trim() === ")") {
+                    i++
+                    break
+                }
+                data += " " + token
+                if (/BODY\[HEADER/i.test(token)) pendingSection = "header"
+                else if (/BODY\[/i.test(token)) pendingSection = "body"
+            }
+
+            const uidMatch = /UID (\d+)/.exec(data)
+            const flagsMatch = /FLAGS \(([^)]*)\)/.exec(data)
+            const dateMatch = /INTERNALDATE "([^"]+)"/.exec(data)
+            const sizeMatch = /RFC822\.SIZE (\d+)/.exec(data)
+
+            const headerPart = parts.find(p => p.section === "header")
+            const bodyPart = parts.find(p => p.section === "body")
+
+            let rawMessage: string
+            if (fetchBody && bodyPart) {
+                rawMessage = bodyPart.content
+            } else {
+                rawMessage = ""
+            }
+
+            let headerStr: string
+            if (fetchBody && rawMessage) {
+                const sepIdx = rawMessage.indexOf("\r\n\r\n")
+                headerStr = sepIdx === -1 ? rawMessage : rawMessage.slice(0, sepIdx)
+            } else {
+                headerStr = headerPart?.content ?? ""
+            }
+
+            const headerMap = parseHeaders(headerStr)
+
+            const email: Email = {
+                uid: uidMatch ? parseInt(uidMatch[1]) : NaN,
+                seq,
+                flags: flagsMatch
+                    ? flagsMatch[1].split(/\s+/).filter(Boolean).map(f => f.replace(/^\\/, ""))
+                    : [],
+                internalDate: dateMatch ? new Date(dateMatch[1]) : new Date(NaN),
+                size: sizeMatch ? parseInt(sizeMatch[1]) : NaN,
+                from: parseAddresses(headerMap["from"] ?? ""),
+                to: parseAddresses(headerMap["to"] ?? ""),
+                cc: parseAddresses(headerMap["cc"] ?? ""),
+                subject: headerMap["subject"] ?? "",
+                messageID: headerMap["message-id"] ?? "",
+                contentType: headerMap["content-type"] ?? "",
+                headers: headerMap,
+                rawHeaders: headerStr,
+                body: {
+                    text: undefined,
+                    html: undefined,
+                    raw: rawMessage
+                },
+                attachments: [],
+                raw: rawMessage || headerStr
+            }
+
+            if (fetchBody && rawMessage) {
+                const root = parseMime(new TextEncoder().encode(rawMessage))
+                const extracted = extractContent(root)
+                email.body.text = extracted.text
+                email.body.html = extracted.html
+                email.attachments = extracted.attachments
+            }
 
             emails.push(email)
         }
@@ -423,143 +390,216 @@ export class CFImap {
         return emails
     }
 
-
     /**
-     * Searches emails based on the props given.
+     * Searches emails based on the props given. Returns sequence numbers
+     * (or UIDs with useUid: true).
      */
-    searchEmails = async (props: SearchEmailsProps) => {
-        if (!this.socket || !this.reader || !this.writer) throw new Error("Not initialised")
+    searchEmails = async (props: SearchEmailsProps): Promise<number[]> => {
+        this.requireConnection()
+        this.requireFolder()
 
         if (!props) throw new Error("Props not given")
 
-        if (Object.keys(props).length === 0) throw new Error("No search options given. You must specify at least one search option.")
+        const query = buildSearchQuery(props)
+        if (!query) throw new Error("No search options given. You must specify at least one search option.")
 
-        if (!this.selectedFolder) throw new Error("Folder not selected! Before running this function, run the selectFolder() function!")
+        const tag = this.nextTag()
+        await this.send(tag, `${props.useUid ? "UID " : ""}SEARCH ${query}`)
+        const { items } = await this.stream!.readUntilTag(tag)
 
-        let unFlags = [
-            "answered",
-            "deleted",
-            "draft",
-            "flagged",
-            "seen"
-        ]
+        const ids: number[] = []
 
-        let command = `A5 SEARCH`
-
-        let options: string[] = []
-
-        let keys = Object.keys(props)
-
-        for (let key of keys) {
-            // ! fix later!!!
-            // @ts-ignore
-            let value = props[key];
-
-            switch (typeof value) {
-                case "boolean":
-                    if (value) options.push(key.toUpperCase())
-                    else {
-                        if (unFlags.includes(key)) options.push(`un${key}`.toUpperCase())
-                    }
-                    break;
-                case "string":
-                    options.push(`${key.toUpperCase()} ${value}`)
-                    break;
-                case "number":
-                    options.push(`${key.replace("Than", "")} ${value.toString()}`.toUpperCase())
-                    break;
-                case "object":
-                    if (Array.isArray(value)) {
-                        let values = []
-
-                        for (let v of value) {
-                            values.push(`${v}`)
-                        }
-
-                        options.push(`${key.toUpperCase()} ${values.join("")}`)
-                    }
-
-                    else if (value instanceof Date && !isNaN(value.valueOf())) {
-                        const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-                        const monthIndex = value.getMonth();
-
-                        options.push(`${key.toUpperCase()} ${value.getDate()}-${monthNames[monthIndex]}-${value.getFullYear()}`)
-                    }
-
-                    else if (key == "header") {
-                        options.push(`${key.toUpperCase()} ${value.key.toUpperCase()} "${value.value}"`)
-                    }
-                    break;
+        for (const item of items) {
+            if (!item.line.startsWith("* SEARCH")) continue
+            const parts = item.line.slice("* SEARCH".length).trim().split(/\s+/)
+            for (const part of parts) {
+                if (part === "") continue
+                const n = parseInt(part)
+                if (!isNaN(n)) ids.push(n)
             }
-
-            if (keys.includes("all") && props["all"] === true) {
-                options = ["ALL"]
-            }
-        }
-
-        let query = `${command} ${options.join(" ")}`
-
-        await this.writer.write(await this.encoder.encode(query.trim() +  "\r\n"))
-
-        let decoded = await this.decoder.decode((await this.reader.read()).value)
-
-        let responses = decoded.split("\r\n")
-
-        let ids: number[] = []
-
-        for (let response of responses) {
-            if (!response.startsWith("* SEARCH")) continue
-
-            let temp = response.replace("* SEARCH", "").trim().split(" ")
-
-            for (let t of temp) {
-                if (t === "") continue
-
-                ids.push(parseInt(t))
-            }
-
-            break;
         }
 
         return ids
     }
 
     /**
-     * Requests a "checkpoint" on the server, a.k.a requests that the server does some houskeeping.
-     * Almost never used, but exists in the RFC 3501 spec.
-     * Removed in the RFC 9051 spec, however most providers still support it.
+     * Adds, removes or replaces flags on one or more messages.
+     * @param target - Sequence number range (or UID range with useUid), e.g. "1:5" or "42"
+     * @param flags - Flags without the backslash, e.g. ["Seen", "Flagged"]
+     * @param mode - add (default), remove or replace
      */
-    check = async () => {
-        if (!this.socket || !this.reader || !this.writer) throw new Error("Not initialised")
+    storeFlags = async (target: string, flags: string[], mode: "add" | "remove" | "replace" = "add", useUid = false): Promise<Array<{ seq: number, flags: string[] }>> => {
+        this.requireConnection()
+        this.requireFolder()
 
-        let query = `FXXZ CHECK\r\n`
+        if (!flags.length) throw new Error("No flags given")
 
-        let encoded = await this.encoder.encode(query)
+        const op = mode === "add" ? "+FLAGS" : mode === "remove" ? "-FLAGS" : "FLAGS"
+        const flagStr = flags.map(f => f.startsWith("\\") ? f : `\\${f}`).join(" ")
 
-        await this.writer.write(encoded)
+        const tag = this.nextTag()
+        await this.send(tag, `${useUid ? "UID " : ""}STORE ${target} ${op} (${flagStr})`)
+        const { items } = await this.stream!.readUntilTag(tag)
 
-        let decoded = await this.decoder.decode((await this.reader.read()).value)
+        const result: Array<{ seq: number, flags: string[] }> = []
+        for (const item of items) {
+            const m = /^\* (\d+) FETCH \((?:UID \d+ )?FLAGS \(([^)]*)\)(?: UID \d+)?\)$/.exec(item.line)
+            if (!m) continue
+            result.push({
+                seq: parseInt(m[1]),
+                flags: m[2].split(/\s+/).filter(Boolean).map(f => f.replace(/^\\/, ""))
+            })
+        }
+        return result
+    }
 
-        let responses = decoded.split("\r\n")
+    /**
+     * Permanently removes messages marked with the \Deleted flag.
+     * @param opts.range - Optional sequence/UID range to restrict expunging to.
+     * @param opts.useUid - Use UID EXPUNGE (requires a range; only removes the expunged UIDs of the selected mailbox)
+     */
+    expunge = async (opts: { range?: string, useUid?: boolean } = {}): Promise<number[]> => {
+        this.requireConnection()
+        this.requireFolder()
 
-        return responses
+        if (opts.useUid && !opts.range) {
+            throw new Error("UID EXPUNGE requires a range, e.g. { range: '1:10', useUid: true }")
+        }
+
+        const tag = this.nextTag()
+        await this.send(tag, `${opts.useUid ? "UID " : ""}EXPUNGE${opts.range ? ` ${opts.range}` : ""}`)
+        const { items } = await this.stream!.readUntilTag(tag)
+
+        const expunged: number[] = []
+        for (const item of items) {
+            const m = /^\* (\d+) EXPUNGE/.exec(item.line)
+            if (m) expunged.push(parseInt(m[1]))
+        }
+        return expunged
+    }
+
+    /**
+     * Copies messages to another folder.
+     * @param target - Destination folder
+     * @param range - Sequence number range (or UID range with useUid), e.g. "1:5"
+     */
+    copy = async (target: string, range: string, useUid = false): Promise<void> => {
+        this.requireConnection()
+
+        const tag = this.nextTag()
+        await this.send(tag, `${useUid ? "UID " : ""}COPY ${range} ${quote(target)}`)
+        await this.stream!.readUntilTag(tag)
+    }
+
+    /**
+     * Moves messages to another folder (requires the MOVE capability).
+     * @param target - Destination folder
+     * @param range - Sequence number range (or UID range with useUid), e.g. "1:5"
+     */
+    move = async (target: string, range: string, useUid = false): Promise<void> => {
+        this.requireConnection()
+
+        const tag = this.nextTag()
+        await this.send(tag, `${useUid ? "UID " : ""}MOVE ${range} ${quote(target)}`)
+        await this.stream!.readUntilTag(tag)
+    }
+
+    /**
+     * Requests mailbox status information.
+     * @param folder - Folder to check
+     * @param items - Which items to request (defaults to MESSAGES RECENT UIDNEXT UIDVALIDITY UNSEEN)
+     */
+    status = async (
+        folder: string,
+        items: Array<"MESSAGES" | "RECENT" | "UIDNEXT" | "UIDVALIDITY" | "UNSEEN"> = ["MESSAGES", "RECENT", "UIDNEXT", "UIDVALIDITY", "UNSEEN"]
+    ): Promise<Record<string, number>> => {
+        this.requireConnection()
+
+        const tag = this.nextTag()
+        await this.send(tag, `STATUS ${quote(folder)} (${items.join(" ")})`)
+        const { items: responses } = await this.stream!.readUntilTag(tag)
+
+        for (const item of responses) {
+            if (!item.line.startsWith("* STATUS")) continue
+            const list = parseImapList(item.line.slice("* STATUS".length).trim())
+            const kv = list[1]
+            if (!Array.isArray(kv)) continue
+            const result: Record<string, number> = {}
+            for (let i = 0; i < kv.length; i += 2) {
+                result[String(kv[i]).toLowerCase()] = parseInt(String(kv[i + 1]))
+            }
+            return result
+        }
+
+        throw new Error("No STATUS response received", { cause: responses })
+    }
+
+    /**
+     * Appends a message to a folder.
+     * @param folder - Destination folder
+     * @param message - Full raw message (headers + body), as string or bytes
+     * @param flags - Flags to set on the appended message, e.g. ["Seen"]
+     * @param internalDate - Internal date of the message
+     */
+    append = async (folder: string, message: string | Uint8Array, flags?: string[], internalDate?: Date): Promise<void> => {
+        this.requireConnection()
+
+        const bytes = typeof message === "string" ? new TextEncoder().encode(message) : message
+        const flagStr = flags?.length
+            ? ` (${flags.map(f => f.startsWith("\\") ? f : `\\${f}`).join(" ")})`
+            : ""
+        const dateStr = internalDate ? ` "${formatInternalDate(internalDate)}"` : ""
+
+        const tag = this.nextTag()
+        await this.send(tag, `APPEND ${quote(folder)}${flagStr}${dateStr} {${bytes.length}}`)
+        await this.stream!.readUntilTag(tag, { continuation: true })
+
+        await this.writer!.write(bytes)
+        await this.writer!.write(new TextEncoder().encode("\r\n"))
+        await this.stream!.readUntilTag(tag)
+    }
+
+    /**
+     * Requests a "checkpoint" on the server, a.k.a requests that the server
+     * does some housekeeping. Almost never used, but exists in the RFC 3501
+     * spec. Removed in the RFC 9051 spec, however most providers still
+     * support it.
+     */
+    check = async (): Promise<string[]> => {
+        this.requireConnection()
+
+        const tag = this.nextTag()
+        await this.send(tag, "CHECK")
+        const { items } = await this.stream!.readUntilTag(tag)
+        return items.map(i => i.line)
     }
 
     /**
      * Logs the user out of the IMAP session and closes the socket.
      */
-    logout = async () => {
-        if (!this.socket || !this.reader || !this.writer) throw new Error("Not initialised")
+    logout = async (): Promise<boolean> => {
+        this.requireConnection()
 
-        let query = `A023 LOGOUT\r\n`
+        try {
+            const tag = this.nextTag()
+            await this.send(tag, "LOGOUT")
+            await this.stream!.readUntilTag(tag)
+        } catch {
+            // Socket might already be closed by the server; still try to close locally
+        }
 
-        let encoded = await this.encoder.encode(query)
+        try {
+            await this.socket!.close()
+        } catch { /* already closed */ }
 
-        await this.writer.write(encoded)
-
-        await this.socket.close() // The server should close it automatically, so this is more of a failsafe.
+        this.socket = null
+        this.stream = null
+        this.writer = null
+        this.selectedFolder = ""
 
         return true
     }
-}
 
+    /** Alias of logout() */
+    close = async (): Promise<boolean> => this.logout()
+}
