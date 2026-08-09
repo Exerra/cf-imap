@@ -6,8 +6,6 @@
 
 IMAP (v4) client for the Cloudflare Workers platform. Do not try to run this on other runtimes, it will not work.
 
-Warning, this version is **pre-release**, so breaking changes **may** happen between versions.
-
 ## Initialisation
 
 The `CFImap` class can be created in any part of the code, **however it is advised to use the `connect()` function only in a request handler**. That is because the Cloudflare Workers platform limits some functionality (mainly `await`) outside of handlers.
@@ -119,7 +117,3 @@ await imap.logout()
 ## Documentation
 
 Documentation can be found [here](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/intro).
-
-:::note
-`v1.0.0` is published under the `next` dist-tag for now: `npm install cf-imap@next`
-:::
