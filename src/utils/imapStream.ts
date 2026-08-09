@@ -41,16 +41,19 @@ export class ImapStream {
     }
 
     private async fillBuffer(): Promise<void> {
-        const timer = new Promise<never>((_, reject) => {
-            setTimeout(() => reject(new Error(`IMAP read timed out after ${this.timeoutMs}ms`)), this.timeoutMs)
+        let timer: ReturnType<typeof setTimeout> | undefined
+        const timeout = new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error(`IMAP read timed out after ${this.timeoutMs}ms`)), this.timeoutMs)
         })
 
         let result: ReadableStreamReadResult<any>
         try {
-            result = await Promise.race([this.reader.read(), timer])
+            result = await Promise.race([this.reader.read(), timeout])
         } catch (e) {
             this.close()
             throw e
+        } finally {
+            if (timer) clearTimeout(timer)
         }
 
         if (result.done) throw new Error("IMAP connection closed by server")
