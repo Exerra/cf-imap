@@ -86,4 +86,8 @@ await imap.logout()
 
 ## Documentation
 
-Documentation can be found [here](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v0.x.x/intro).
+Documentation can be found [here](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/intro).
+
+:::note
+`v1.0.0` is published under the `next` dist-tag for now: `npm install cf-imap@next`
+:::
