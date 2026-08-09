@@ -89,5 +89,11 @@ export function buildSearchQuery(props: SearchEmailsProps): string | null {
         }
     }
 
-    return opts.length > 0 ? opts.join(" ") : null
+    const query = opts.join(" ")
+    if (!query) return null
+
+    // RFC 9051 §6.4.4: servers must assume UTF-8 when CHARSET is omitted, so
+    // this is redundant for IMAP4rev2 servers. IMAP4rev1 servers need it for
+    // non-ASCII search strings, so add it whenever the query isn't pure ASCII.
+    return /[^\x00-\x7F]/.test(query) ? `CHARSET UTF-8 ${query}` : query
 }

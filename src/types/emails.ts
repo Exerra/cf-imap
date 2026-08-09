@@ -1,6 +1,11 @@
 export type Options = {
     host: string,
     port: number,
+    /**
+     * Use TLS. When true, port 993 (the conventional Implicit TLS port,
+     * RFC 8314) negotiates TLS immediately; any other port uses opportunistic
+     * TLS via the STARTTLS command (RFC 9051 §6.2.1).
+     */
     tls: boolean,
     auth: {
         username: string,
@@ -33,8 +38,9 @@ export type FetchEmailsProps = {
      */
     byteLimit?: number,
     /**
-     * If true, limit is interpreted as a UID range (UID FETCH). The seq
-     * field of returned emails then holds the UID as well.
+     * If true, limit is interpreted as a UID range (UID FETCH) and messages
+     * are matched by UID. The uid field then carries the message UID; seq
+     * always holds the sequence number in the selected folder.
      */
     useUid?: boolean,
     peek?: boolean
@@ -106,11 +112,15 @@ export type Namespace = {
 export type MailboxInfo = {
     /** Number of messages (EXISTS) */
     emails: number,
-    /** Number of recent messages */
+    /** Number of recent messages (deprecated in IMAP4rev2, kept for IMAP4rev1 servers) */
     recent: number,
     unseen?: number,
     uidNext?: number,
     uidValidity?: number,
+    /** Highest modification sequence (CONDSTORE, RFC 7162), if advertised */
+    highestModSeq?: number,
+    /** True if the mailbox does not support modification sequences (CONDSTORE) */
+    nomodSeq?: boolean,
     /** Flags supported by the mailbox */
     flags: string[],
     /** Flags that can be permanently stored, e.g. ["Seen", "Deleted", "*"] */
@@ -157,4 +167,25 @@ export type SearchEmailsProps = {
     text?: string, // Emails that contain the specified string in the header or body of the email
     to?: string,
     uid?: string // Supports a single UID or a range, e.g. "5" or "1:10"
+}
+
+/**
+ * UID mapping reported by the COPYUID response code (RFC 9051 §7.1) on
+ * successful COPY and MOVE (and UID COPY / UID MOVE) commands.
+ */
+export type CopyUidInfo = {
+    /** UIDVALIDITY of the destination mailbox */
+    uidValidity: number,
+    /** UID set of the source messages, as reported by the server */
+    sourceUIDs: string,
+    /** UID set of the messages in the destination mailbox */
+    destUIDs: string
+}
+
+/** Result of APPEND, from the APPENDUID response code (RFC 9051 §7.1). */
+export type AppendResult = {
+    /** UIDVALIDITY of the destination mailbox */
+    uidValidity: number,
+    /** UID assigned to the appended message */
+    uid: number
 }

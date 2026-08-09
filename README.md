@@ -54,12 +54,40 @@ const headersOnly = await imap.fetchEmails({ limit: [1, 10], fetchBody: false })
 
 // Flags, copy, move, expunge, status, append
 await imap.storeFlags("1:5", ["Seen"], "add") // add | remove | replace
-await imap.copy("INBOX/archive", "1:5")
+await imap.copy("INBOX/archive", "1:5") // returns COPYUID mapping when available
 await imap.move("INBOX/archive", "1:5", true) // useUid
 await imap.expunge({ range: "1:10", useUid: true })
 const status = await imap.status("INBOX")
-await imap.append("INBOX", rawMessage, ["Seen"])
+await imap.append("INBOX", rawMessage, ["Seen"]) // returns APPENDUID when available
+
+// Mailbox lifecycle
+await imap.examine("INBOX") // read-only select
+await imap.closeMailbox() // CLOSE: expunges \Deleted then deselects
+await imap.unselect() // UNSELECT: deselect without expunging
+
+// IDLE: push updates; return false from the callback to stop
+await imap.idle((item) => {
+    console.log(item.line) // "* 5 EXISTS", "* 2 EXPUNGE", ...
+    // return false to leave IDLE
+})
 ```
+
+### RFC 9051 (IMAP4rev2) compliance
+
+- **TLS**: `tls: true` on port 993 uses Implicit TLS (RFC 8314); other ports use the
+  `STARTTLS` command (RFC 9051 §6.2.1) and re-issue `CAPABILITY` after upgrading.
+- **Authentication**: `AUTHENTICATE PLAIN` with a SASL initial response is tried first;
+  `LOGIN` is only used as a last resort and never when the server advertises
+  `LOGINDISABLED` (RFC 9051 §6.2.2/§6.2.3).
+- **IMAP4rev2 negotiation**: `ENABLE IMAP4rev2` is issued automatically when a server
+  advertises both `IMAP4rev1` and `IMAP4rev2` (RFC 9051 Appendix A).
+- **Search**: parses both `* SEARCH` (IMAP4rev1) and `* ESEARCH` (IMAP4rev2) responses;
+  non-ASCII queries get `CHARSET UTF-8`.
+- **Mailbox names**: UTF-8 (Net-Unicode) on IMAP4rev2 sessions; automatically converted
+  to/from modified UTF-7 (RFC 2152) on IMAP4rev1-only servers.
+- `check()` was removed from IMAP4rev2 and is refused on rev2 sessions — use `NOOP`/`IDLE`.
+- The deprecated `\Recent`/`NEW`/`OLD`/`RECENT` search keys still work against
+  IMAP4rev1 servers but are not part of IMAP4rev2.
 
 ### Email object
 
