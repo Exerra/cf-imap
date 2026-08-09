@@ -1,7 +1,6 @@
 # cf-imap
 
 <picture><source media="(prefers-color-scheme: dark)" srcset="https://www.shieldcn.dev/badge/Stack-Cloudflare_Workers-F38020.svg?logo=cloudflare&amp;variant=branded&amp;size=sm&amp;mode=dark&amp;label=+"><img alt="Cloudflare Workers" src="https://www.shieldcn.dev/badge/Stack-Cloudflare_Workers-F38020.svg?logo=cloudflare&amp;variant=branded&amp;size=sm&amp;mode=light&amp;label=+"></picture>
-<picture><source media="(prefers-color-scheme: dark)" srcset="https://www.shieldcn.dev/npm/cf-imap.svg?variant=secondary&amp;size=sm&amp;mode=dark"><img alt="npm Version" src="https://www.shieldcn.dev/npm/cf-imap.svg?variant=secondary&amp;size=sm&amp;mode=light"></picture>
 <picture><source media="(prefers-color-scheme: dark)" srcset="https://www.shieldcn.dev/github/license/Exerra/cf-imap.svg?variant=secondary&amp;size=sm&amp;mode=dark"><img alt="License" src="https://www.shieldcn.dev/github/license/Exerra/cf-imap.svg?variant=secondary&amp;size=sm&amp;mode=light"></picture>
 
 IMAP (v4) client for the Cloudflare Workers platform. Do not try to run this on other runtimes, it will not work.
