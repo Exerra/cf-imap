@@ -3,17 +3,19 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "type": "module",
-  "version": "0.0.12",
+  "version": "0.1.0",
   "description": "IMAP (v4) client for the Cloudflare Workers platform.",
   "repository": {
     "type": "git",
     "url": "https://github.com/Exerra/cf-imap.git"
   },
   "scripts": {
-    "build": "tsc"
+    "build": "tsc",
+    "test": "bun test test/*.test.ts"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20240117.0"
+    "@cloudflare/workers-types": "^4.20240117.0",
+    "typescript": "^5.0.0"
   },
   "peerDependencies": {
     "typescript": "^5.0.0"
