@@ -1,0 +1,31 @@
+# cf-imap
+
+> IMAPv4 client library for the Cloudflare Workers platform (RFC 9051 / IMAP4rev2, backwards compatible with IMAP4rev1 / RFC 3501). Written in TypeScript, published to npm as `cf-imap` (v1.0.0, currently under the `next` dist-tag). Only runs on Cloudflare Workers — it will not work on Node.js or other runtimes.
+
+## Important
+- [Introduction](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/intro): Overview, provider support (Gmail/Outlook require OAuth2), feature list, RFC 9051 compliance, breaking changes from v0.x.x.
+- [Initialisation](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/init): Constructor options, `connect()`, password authentication (`AUTHENTICATE PLAIN` / `LOGIN`), OAuth 2.0 (`AUTHENTICATE XOAUTH2`), IMAP4rev2 negotiation.
+- [Errors](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/error_handling): The `ImapError` class (`status`, `tag`, `messageText`, `untagged`), read timeouts, connection drops and usage errors.
+- [Logging out](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/logout): `logout()` / `close()` — end the session and close the socket.
+
+## Optional
+- [Full documentation mirror](llms-full.txt): The complete v1.0.0 documentation (all pages) in a single markdown file, for LLMs.
+- [GitHub repository](https://github.com/Exerra/cf-imap): Source code and issue tracker.
+- [npm](https://www.npmjs.com/package/cf-imap): Package registry entry; install with `npm install cf-imap@next` (or `bun add cf-imap@next`).
+
+## Details
+- [Namespaces](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/namespaces): `getNamespaces()` → `{ personal, other, shared }` prefixes and hierarchy delimiters.
+- [GET folders](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/folders/get): `getFolders(prefix, filter)` — list folders in a namespace (`*` / `%` wildcards).
+- [SELECT folder](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/folders/select): `selectFolder()` → typed `MailboxInfo`, plus `examine()` (read-only), `closeMailbox()` (CLOSE), `unselect()` (UNSELECT).
+- [FETCH email(s)](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/emails/fetch): `fetchEmails()` — MIME parsing, charset decoding, attachments; `Email` and `Attachment` types.
+- [SEARCH emails](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/emails/search): `searchEmails()` — full list of searchable fields, `* SEARCH` and `* ESEARCH` parsing, UID search.
+- [STORE flags](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/misc/store): `storeFlags(target, flags, mode, useUid?)` — add/remove/replace message flags.
+- [EXPUNGE](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/misc/expunge): `expunge({ range?, useUid? })` — permanently delete `\Deleted` messages (dangerous).
+- [COPY emails](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/misc/copy): `copy(target, range, useUid?)` — returns `CopyUidInfo` (`COPYUID`) or `null`.
+- [MOVE emails](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/misc/move): `move(target, range, useUid?)` — RFC 9051 base command, `MOVE` capability on rev1 servers.
+- [STATUS](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/misc/status): `status(folder, items?)` — folder status without selecting; `DELETED`/`SIZE` supported (rev2).
+- [APPEND](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/misc/append): `append(folder, message, flags?, internalDate?)` — returns `AppendResult` (`APPENDUID`) or `null`.
+- [Check](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/misc/check): `check()` — IMAP4rev1 servers only; throws on rev2 sessions (CHECK removed in RFC 9051).
+- [IDLE](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/misc/idle): `idle(callback)` — server-pushed updates, clean timeout exit, Cloudflare Workers constraints and billing.
+- [Protocol commands](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/misc/commands): `capability()`, `noop()`, `enable()` — low-level protocol commands.
+- [Extendability](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/extendability): Public surface (`session`, `capabilities`, `selectedFolder`); raw socket no longer exposed.

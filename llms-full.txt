@@ -1,0 +1,972 @@
+# cf-imap — Documentation mirror (llms-full.txt)
+
+> IMAPv4 client library for the Cloudflare Workers platform (RFC 9051 / IMAP4rev2, backwards compatible with IMAP4rev1 / RFC 3501). Written in TypeScript, published to npm as `cf-imap` (v1.0.0, currently under the `next` dist-tag). Only runs on Cloudflare Workers — it will not work on Node.js or other runtimes.
+>
+> Index file: [llms.txt](llms.txt). Live pages: https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/
+
+Sections:
+1. Intro
+2. Initialisation
+3. Namespaces
+4. GET folders
+5. SELECT folder
+6. FETCH email(s)
+7. SEARCH emails
+8. STORE flags
+9. EXPUNGE
+10. COPY emails
+11. MOVE emails
+12. STATUS
+13. APPEND
+14. Check
+15. IDLE
+16. Protocol commands
+17. Errors
+18. Logging out
+19. Extendability
+
+---
+
+# Intro
+
+> **Note:** This version is currently published under the **`next`** dist-tag on npm:
+>
+> ```bash
+> npm install cf-imap@next
+> # or with bun
+> bun add cf-imap@next
+> ```
+>
+> It will be promoted to `latest` once the stable 1.0.0 release ships.
+
+`cf-imap` is an IMAPv4 library for use **within the Cloudflare Workers platform**.
+
+This package was made because all of the other IMAP libraries are built for NodeJS, and Cloudflare Workers even with node compatibility turned does not support them.
+
+## Provider support
+
+Most providers stick to the two IMAP specifications (`RFC 3501` and `RFC 9051`), however some have their own experimental implementations.
+
+> **Note:** **Gmail and Outlook require OAuth2** — both providers (and Microsoft 365, Yahoo, and others) no longer accept passwords over IMAP. `cf-imap` supports them via the `XOAUTH2` SASL mechanism: pass an OAuth 2.0 access token with `auth.accessToken` (or `auth.getAccessToken`) and `connect()` handles the rest — see [Initialisation → OAuth 2.0](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/init#oauth-20-authentication). You must obtain and refresh the token yourself (the library does not run the OAuth flow).
+
+However, if the provider you are using isn't tested, uses their own implementation of IMAP and `cf-imap` is throwing errors on things that *should work* (see: [Errors](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/error_handling)), please [raise an issue on GitHub](https://github.com/Exerra/cf-imap/issues) so I can promptly fix it.
+
+## Features
+
+- [x] [Connect to an IMAP server](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/init)
+- [x] [Get namespaces](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/namespaces)
+- [x] [Get folders](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/folders/get)
+- [x] [Select a folder](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/folders/select)
+- [x] [Examine a folder read-only](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/folders/select#examine-read-only-select)
+- [x] [Close / unselect a folder](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/folders/select#close--unselect-deselect)
+- [x] [Fetch emails (with MIME parsing, attachments & charset decoding)](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/emails/fetch)
+- [x] [Search emails](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/emails/search)
+- [x] [Store flags](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/misc/store)
+- [x] [Expunge emails](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/misc/expunge)
+- [x] [Copy emails](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/misc/copy)
+- [x] [Move emails](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/misc/move)
+- [x] [Status of folder](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/misc/status)
+- [x] [Append email](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/misc/append)
+- [x] [IDLE (push updates)](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/misc/idle)
+- [x] [Check (IMAP4rev1 servers only)](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/misc/check)
+- [x] [Capability / NOOP / ENABLE](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/misc/commands)
+- [x] [Logout](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/logout)
+- [ ] Rename folder
+- [ ] Delete folder
+- [ ] Create folder
+
+## RFC 9051 (IMAP4rev2) compliance
+
+`cf-imap` is written against the current IMAP specification, **RFC 9051 (IMAP4rev2)**, while staying compatible with the widely deployed IMAP4rev1 (RFC 3501):
+
+- **TLS** — Implicit TLS on port 993 (RFC 8314) and opportunistic TLS via `STARTTLS` on other ports (RFC 9051 §6.2.1).
+- **Authentication** — `AUTHENTICATE PLAIN` with SASL-IR preferred; `LOGIN` only as a last resort and never with `LOGINDISABLED`; `AUTHENTICATE XOAUTH2` (OAuth 2.0 access tokens) for providers that require OAuth2 (RFC 9051 §6.2.2/§6.2.3, RFC 7628-style).
+- **IMAP4rev2 negotiation** — `ENABLE IMAP4rev2` is issued automatically on dual-version servers (RFC 9051 Appendix A).
+- **Search** — both `* SEARCH` (rev1) and `* ESEARCH` (rev2) responses are parsed (RFC 9051 §6.4.4).
+- **Mailbox names** — UTF-8 (Net-Unicode) on rev2 sessions; automatic modified UTF-7 (RFC 2152) conversion on rev1-only servers.
+- **UID tracking** — `COPYUID` (copy/move) and `APPENDUID` (append) response codes are surfaced.
+- Commands removed in RFC 9051 (`CHECK`, `\Recent`-based search keys) are handled gracefully.
+
+## Breaking changes from v0.x.x
+
+The `v1.0.0` rewrite focused on protocol correctness: a tagged command pipeline with a literal-aware response reader, robust parsing, proper error handling, and full MIME support. As a result some public APIs changed:
+
+- The `Email` type was reworked — `from`/`to`/`cc` are now `string[]`, `date` was renamed to `internalDate`, and `body` is now an object (`{ text?, html?, raw }`) plus a new `attachments` array.
+- `fetchEmails` props changed — `folder` is now optional (falls back to the selected folder), `fetchBody` defaults to `true`, and a new `useUid` option was added.
+- `getNamespaces` now returns a typed object (`{ personal, other, shared }`) instead of `string[]`.
+- `selectFolder` now returns a fully typed [MailboxInfo](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/folders/select) instead of a dynamic object.
+- `expunge` now takes an options object (`{ range?, useUid? }`), and `UID EXPUNGE` requires a range.
+- `copy()` and `move()` now return a [CopyUidInfo](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/misc/copy) (or `null`), and `append()` returns an [AppendResult](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/misc/append) (or `null`).
+- New commands: `examine()`, `idle()`, `closeMailbox()`, `unselect()`, `capability()`, `noop()`, `enable()`.
+- New authentication mode: `auth` now also accepts an OAuth 2.0 access token (`auth.accessToken`) or a token callback (`auth.getAccessToken`) for `XOAUTH2` — see [Initialisation → OAuth 2.0](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/init#oauth-20-authentication).
+- `check()` only works on IMAP4rev1 servers — it throws on IMAP4rev2 sessions.
+- The raw socket, writer, reader, encoder & decoder are no longer public (see [Extendability](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/extendability)).
+
+---
+
+# Initialisation
+
+The `CFImap` class can be created in any part of the code, **however it is advised to use the `connect()` function only in a request handler**. That is because the Cloudflare Workers platform limits some functionality (mainly `await`) outside of handlers.
+
+## Usage
+
+The constructor takes an `Options` object:
+
+```ts
+import { CFImap } from "cf-imap"
+
+const imap = new CFImap({
+    host: "mail.example.com",
+    port: 993,
+    tls: true,
+    auth: {
+        username: "user@example.com",
+        password: "pa$$w0rd"
+    },
+    timeoutMs: 30000 // optional, defaults to 30000
+})
+
+const handleRequest = async () => {
+    await imap.connect()
+}
+```
+
+| Option | Type | Description |
+| ---- | ---- | ---- |
+| `host` | `string` | Hostname of the IMAP server. |
+| `port` | `number` | Port of the IMAP server (usually `993` with TLS or `143` without). |
+| `tls` | `boolean` | Whether to use TLS. On port `993` (the conventional Implicit TLS port, RFC 8314) TLS is negotiated immediately; on any other port the `STARTTLS` command is used (RFC 9051 §6.2.1). |
+| `auth.username` | `string` | Username used for authentication. |
+| `auth.password` | `string` | Password used for authentication (`AUTHENTICATE PLAIN` / `LOGIN`). |
+| `auth.accessToken` | `string` | OAuth 2.0 access token used for authentication (`AUTHENTICATE XOAUTH2`). Either this or `auth.getAccessToken` instead of `auth.password`. |
+| `auth.getAccessToken` | `() => string \| Promise<string>` | Called at `connect()` time to obtain a fresh access token (`AUTHENTICATE XOAUTH2`). Either this or `auth.accessToken` instead of `auth.password`. |
+| `timeoutMs` | `number` | Read timeout for IMAP responses in milliseconds (optional, defaults to `30000`). |
+
+## connect()
+
+Connects to the IMAP server, reads the greeting, negotiates TLS if configured, authenticates and enables `IMAP4rev2` when the server supports it. On success the session is stored on the instance:
+
+```ts
+await imap.connect()
+
+imap.session          // { id?: string, protocol?: string }
+imap.capabilities     // string[], e.g. ["IMAP4rev1", "UIDPLUS", "MOVE"]
+```
+
+### Authentication
+
+Authentication is handled automatically per RFC 9051 §6.2.2/§6.2.3:
+
+1. When an OAuth 2.0 access token is configured (`auth.accessToken` or `auth.getAccessToken`) and the server advertises `AUTH=XOAUTH2`, the `XOAUTH2` SASL mechanism is used — required by Gmail, Microsoft 365 / Outlook.com, Yahoo and other providers that no longer accept passwords.
+2. `AUTHENTICATE PLAIN` with a SASL initial response is tried when the server advertises `AUTH=PLAIN`.
+3. `LOGIN` is used as a fallback — but never when the server advertises `LOGINDISABLED` (in which case a descriptive error is thrown, with a hint when the server requires OAuth2).
+
+#### OAuth 2.0 authentication
+
+Providers like Gmail (`imap.gmail.com:993`) and Microsoft 365 / Outlook.com (`outlook.office365.com:993`) require OAuth2 — passwords are rejected. Pass a short-lived access token instead of a password:
+
+```ts
+const imap = new CFImap({
+    host: "imap.gmail.com",
+    port: 993,
+    tls: true,
+    auth: {
+        username: "user@gmail.com",
+        accessToken: "ya29.a0AfH6SM..." // an OAuth 2.0 access token
+    }
+})
+```
+
+Because access tokens expire (typically after ~1 hour), use `getAccessToken` to hand the library a fresh token on every `connect()` — the callback is invoked right before the `AUTHENTICATE XOAUTH2` exchange:
+
+```ts
+auth: {
+    username: "user@gmail.com",
+    getAccessToken: async () => {
+        // e.g. exchange a stored refresh token for a new access token
+        // (stored in a Workers secret / KV) via the provider's token endpoint
+        const res = await fetch("https://oauth2.googleapis.com/token", {
+            method: "POST",
+            body: new URLSearchParams({
+                client_id: CLIENT_ID,
+                client_secret: CLIENT_SECRET,
+                refresh_token: REFRESH_TOKEN,
+                grant_type: "refresh_token"
+            })
+        })
+        const data = await res.json()
+        return data.access_token
+    }
+}
+```
+
+> **Note:** The library only performs the IMAP `AUTHENTICATE XOAUTH2` exchange — it does **not** run the OAuth 2.0 flow itself. Obtaining the initial token (authorization code + PKCE or a service-account JWT for Workspace domain-wide delegation) and refreshing it is up to your Worker code. Scopes: Gmail requires `https://mail.google.com/`; Microsoft requires `https://outlook.office.com/IMAP.AccessAsUser.All` (with `offline_access` for refresh tokens).
+
+On failure the server replies with a `+ <base64 JSON>` error challenge (status/schemes/scope). `cf-imap` decodes it, acknowledges the challenge as the protocol requires, and throws an [ImapError](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/error_handling) describing the problem — e.g. an expired token ("status 401 — the access token is expired or invalid").
+
+### IMAP4rev2 negotiation
+
+When a server advertises both `IMAP4rev1` and `IMAP4rev2`, the client must issue `ENABLE IMAP4rev2` to get IMAP4rev2 behavior (RFC 9051 Appendix A) — `connect()` does this automatically.
+
+If the server rejects the login (or any response is an error), a descriptive [ImapError](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/error_handling) is thrown.
+
+From now on, the docs will assume that the initialised CFImap class is called `imap`.
+
+---
+
+# Namespaces
+
+**This should be the first function ran after the [`connect()`](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/init) function** as it returns the prefixes and hierarchy delimiters of the namespaces available to the logged in user. This is a crucial component for the [GET folders](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/folders/get) function.
+
+## Usage
+
+```ts
+let namespaces = await imap.getNamespaces()
+```
+
+## Response
+
+The response is a typed object containing the personal, other and shared namespaces:
+
+```ts
+{
+    personal: [
+        { prefix: "INBOX/", delimiter: "/" }
+    ],
+    other: [],
+    shared: []
+}
+```
+
+| Key | Type | Description |
+| ---- | ---- | ---- |
+| `personal` | `Namespace[]` | Namespaces that are personal to the logged in user. |
+| `other` | `Namespace[]` | Namespaces that belong to other users. |
+| `shared` | `Namespace[]` | Namespaces that are shared between users. |
+
+Where `Namespace` is:
+
+```ts
+type Namespace = {
+    prefix: string,     // e.g. "INBOX/"
+    delimiter: string   // e.g. "/" (empty string if NIL)
+}
+```
+
+A namespace with a `prefix` of `""` is the root namespace — pass the prefix as the first argument to [`getFolders()`](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/folders/get).
+
+---
+
+# GET folders
+
+This function lists all the folders in a [namespace](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/namespaces).
+
+## Usage
+
+This function takes in 2 parameters - namespace & filter. The filter supports the IMAP wildcards (`*` matches everything, `%` matches everything at the current hierarchy level).
+
+```ts
+let folders = await imap.getFolders("INBOX/", "*")
+```
+
+The response is a typed `Folder[]`:
+
+```ts
+type Folder = {
+    name: string,           // e.g. "INBOX/Archive"
+    delimiter: string,      // e.g. "/"
+    attributes: string[]    // e.g. ["HasNoChildren", "Drafts"] (no backslash)
+}
+```
+
+```ts
+[
+    {
+        name: 'INBOX/Archive',
+        delimiter: '/',
+        attributes: [ 'HasNoChildren' ]
+    },
+    {
+        name: 'INBOX/draft',
+        delimiter: '/',
+        attributes: [ 'HasNoChildren', 'Drafts' ]
+    }
+    // [...]
+]
+```
+
+> **Info:** Folder names containing spaces, quotes or other special characters (including names returned as IMAP literals by the server) are parsed correctly. On IMAP4rev1-only servers, folder names are converted from/to modified UTF-7 (RFC 2152) automatically — on IMAP4rev2 sessions they are plain UTF-8.
+
+---
+
+# SELECT folder
+
+This function selects a folder that mail commands get executed in.
+
+**It is absolutely crucial to run this before running any mail commands** (or pass the `folder` prop to [`fetchEmails()`](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/emails/fetch)). Doing so otherwise will cause an error.
+
+## Usage
+
+```ts
+let mailbox = await imap.selectFolder("INBOX")
+```
+
+## Response
+
+The response is a typed `MailboxInfo`:
+
+```ts
+type MailboxInfo = {
+    emails: number,             // number of messages (EXISTS)
+    recent: number,             // number of recent messages (RECENT)
+    unseen?: number,            // OK [UNSEEN n]
+    uidNext?: number,           // OK [UIDNEXT n]
+    uidValidity?: number,       // OK [UIDVALIDITY n]
+    highestModSeq?: number,     // OK [HIGHESTMODSEQ n] (CONDSTORE, RFC 7162)
+    nomodSeq?: boolean,         // true if the mailbox has no modification sequences
+    flags: string[],            // flags supported by the mailbox, e.g. ["Answered", "Flagged", "Seen"]
+    permanentFlags: string[],   // flags that can be stored permanently, e.g. ["Seen", "Deleted", "*"]
+    readOnly: boolean           // true if the mailbox was opened read-only
+}
+```
+
+```ts
+{
+    emails: 78,
+    recent: 0,
+    unseen: 1,
+    uidNext: 92,
+    uidValidity: 1687639849,
+    highestModSeq: 242,
+    flags: [ 'Answered', 'Flagged', 'Draft', 'Deleted', 'Seen' ],
+    permanentFlags: [ 'Answered', 'Flagged', 'Draft', 'Deleted', 'Seen', '*' ],
+    readOnly: false
+}
+```
+
+> **Info:** The `unseen`, `uidNext`, `uidValidity`, `highestModSeq` and `permanentFlags` fields are optional because not every server reports them (or reports them differently). Some servers (e.g. Dovecot) send them as untagged `* OK [...]` lines, which is handled.
+
+## EXAMINE (read-only select)
+
+`examine()` is identical to `selectFolder()` but opens the mailbox read-only (RFC 9051 §6.3.3) — no changes to the mailbox, including flags, are permitted. It returns the same `MailboxInfo` (with `readOnly: true`).
+
+```ts
+const mailbox = await imap.examine("INBOX")
+```
+
+## CLOSE & UNSELECT (deselect)
+
+```ts
+await imap.closeMailbox()   // CLOSE: expunges \Deleted messages, then deselects
+await imap.unselect()       // UNSELECT: deselects without expunging
+```
+
+Both reset the selected-folder state: after them, mail commands require a new `selectFolder()`/`examine()` call. Note the difference from `logout()` — these keep the connection (and authentication) alive.
+
+---
+
+# FETCH email(s)
+
+> **Tip:** A folder must be selected (see ["SELECT folder"](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/folders/select)) before running this function — or pass the `folder` prop to select it automatically.
+
+This function fetches emails from the selected folder, parses the headers and — when `fetchBody` is enabled — the full MIME structure (text/plain, text/html and attachments).
+
+## Usage
+
+```ts
+export type FetchEmailsProps = {
+    limit: [number, number] | number, // range of sequence numbers (or UIDs with useUid), or a single one
+    folder?: string,                  // optional, selects it automatically if different from the selected folder
+    fetchBody?: boolean,              // default true. If false, only the header fields are fetched
+    byteLimit?: number,               // not recommended, may break MIME parsing
+    useUid?: boolean,                 // if true, limit is interpreted as a UID range (UID FETCH)
+    peek?: boolean                    // default true. If false, fetching sets the "\Seen" flag
+}
+```
+
+```ts
+// Full messages, MIME-parsed (sequence numbers 1 through 10, doesn't set \Seen)
+let emails = await imap.fetchEmails({
+    limit: [1, 10],
+    fetchBody: true
+})
+
+// Headers only
+let headers = await imap.fetchEmails({ limit: [1, 10], fetchBody: false })
+
+// By UID (marks the message as \Seen, because peek is false)
+let byUid = await imap.fetchEmails({
+    limit: [42, 42],
+    useUid: true,
+    peek: false
+})
+```
+
+## Response
+
+The type for the response of this function is:
+
+```ts
+export type Email = {
+    uid: number,
+    seq: number,                    // sequence number in the selected folder (always a sequence number, even with useUid)
+    flags: string[],                // e.g. ["Seen", "Flagged"] (no backslash)
+    internalDate: Date,             // INTERNALDATE of the message
+    size: number,                   // RFC822.SIZE in bytes
+    from: string[],                 // decoded addresses, e.g. ['"Jane Doe" <jane@x.c>']
+    to: string[],
+    cc: string[],
+    subject: string,                // MIME-encoded words decoded
+    messageID: string,
+    contentType: string,
+    headers: Record<string, string>,// all parsed headers (lowercased, unfolded, MIME-decoded)
+    rawHeaders: string,
+    body: {
+        text?: string,              // decoded text/plain body, if present
+        html?: string,              // decoded text/html body, if present
+        raw: string                 // the raw body section (the full raw message when fetchBody is true)
+    },
+    attachments: Attachment[],      // parsed MIME attachments (empty when fetchBody is false)
+    raw: string                     // the full raw message (or the raw header section)
+}
+
+export type Attachment = {
+    filename: string,
+    mimeType: string,               // e.g. "application/pdf"
+    size: number,                   // decoded size in bytes
+    encoding: string,               // original Content-Transfer-Encoding, e.g. "base64"
+    content: string,                // decoded content (charset-decoded for text/*, byte-preserving otherwise)
+    contentBase64: string,          // decoded content as base64
+    contentId?: string,             // for inline images
+    isInline: boolean               // true if marked inline (e.g. embedded images)
+}
+```
+
+Example response:
+
+```ts
+[
+  {
+    uid: 17,
+    seq: 1,
+    flags: [ '$NotJunk' ],
+    internalDate: 2023-06-24T20:50:50.000Z,
+    size: 52224,
+    from: [ 'support@inbox.lv' ],
+    to: [ 'user@example.com' ],
+    cc: [],
+    subject: 'Sveicināti inbox.lv!',
+    messageID: '<id@mail.example.com>',
+    contentType: 'multipart/alternative; boundary=C19HvGcu',
+    headers: { subject: 'Sveicināti inbox.lv!', from: 'support@inbox.lv', ... },
+    rawHeaders: 'Return-Path: <support@inbox.lv>\r\nReceived: ...',
+    body: {
+      text: 'Laba izvēle! Laipni lūdzam inbox.lv...',
+      html: '<html>...',
+      raw: 'Return-Path: <support@inbox.lv>\r\n...'
+    },
+    attachments: [],
+    raw: 'Return-Path: <support@inbox.lv>\r\n...'
+  }
+]
+```
+
+> **Info:** Bodies are charset-decoded (UTF-8, latin-1, windows-1252, ...) and transfer-encoding-decoded (base64, quoted-printable). Multipart messages (mixed/alternative/related) are parsed recursively, so nested text parts and inline images are handled correctly.
+
+> **Info:** Large messages that the server splits into multiple literals (`BODY[]<offset> {N}` responses) are re-assembled correctly. With `useUid`, the `uid` field carries the message UID while `seq` remains the sequence number in the selected folder.
+
+> **Tip:** `byteLimit` fetches only the first N octets of each message via a partial fetch (`BODY[]<0.N>`) — the returned `body.raw` will be truncated, which may break MIME parsing. Prefer fetching full messages and filtering by `size` instead.
+
+---
+
+# SEARCH emails
+
+> **Tip:** A folder must be selected (see ["SELECT folder"](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/folders/select)) before running this function.
+
+This function searches the selected folder for emails that match the specified criteria.
+
+## Usage
+
+The function accepts an object with optional searchable fields. At least one needs to be provided for it to not error out. A full list of searchable fields is available [below](#searchable-fields).
+
+```ts
+let searchedEmails = await imap.searchEmails({
+    new: true,
+    deleted: false,
+    header: {
+        key: "Content-Type",
+        value: "text/plain"
+    },
+    body: "meeting"
+})
+
+// Search by UID instead of sequence number
+let uids = await imap.searchEmails({ all: true, useUid: true })
+```
+
+## Response
+
+The response for this function is an array with number IDs containing each email that matches the search criteria. These are sequence numbers by default, or UIDs with `useUid: true`.
+
+```ts
+[ 3, 6, 12, 75 ]
+```
+
+The returned IDs can be passed straight into [`fetchEmails()`](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/emails/fetch) (with `useUid: true` when searching by UID).
+
+> **Info:** Both the IMAP4rev1 `* SEARCH` and the IMAP4rev2 `* ESEARCH` (RFC 9051 §6.4.4) response formats are parsed, including ESEARCH sequence sets with ranges (e.g. `1:3,5`). Non-ASCII search values automatically get a `CHARSET UTF-8` argument.
+
+## Searchable fields
+
+All fields are optional, however **at least one** needs to be provided.
+
+| Field | Type | Description |
+| ---- | ---- | ---- |
+| useUid | `boolean` | Runs `UID SEARCH` and returns UIDs instead of sequence numbers. |
+| all | `boolean` | Returns all the emails in a folder. When true, ignores all of the other filters. |
+| bcc | `string` | Returns emails that have the specified string in the BCC header. |
+| cc | `string` | Returns emails that have the specified string in the CC header. |
+| answered | `boolean` | Returns emails that have the \Answered flag if true and if false then those which don't. |
+| deleted | `boolean` | Returns emails that have the \Deleted flag if true, and if false then those which don't. |
+| draft | `boolean` | Returns emails that have the \Draft flag if true, and if false then those which don't. |
+| flagged | `boolean` | Returns emails that have the \Flagged flag if true, and if false then those which don't. |
+| seen | `boolean` | Returns emails that have the \Seen flag if true, and if false then those which don't. |
+| from | `string` | Returns emails that have the specified string in the FROM header. |
+| to | `string` | Returns emails that have the specified string in the TO header. |
+| subject | `string` | Returns emails whose subject contains the specified string. |
+| body | `string` | Returns emails whose body contains the specified string. |
+| text | `string` | Returns emails whose headers and body contains the specified string. |
+| keyword | `string` | Returns emails that have the specified flag set. |
+| unkeyword | `string` | Returns emails that don't have the specified flag set. |
+| new | `boolean` | Returns emails that have the \Recent flag set, but not the \Seen flag. |
+| recent | `boolean` | Returns emails that have the \Recent flag set. |
+| old | `boolean` | Returns emails that do not have the \Recent flag set. |
+| header | `{ key: string, value: string }` | Returns emails where the specified header exists and has the specified value. |
+| largerThan | `number` | Returns emails whose size is larger than the specified number of octets. |
+| smallerThan | `number` | Returns emails whose size is smaller than the specified number of octets. |
+| on | `Date` | Returns emails whose internal date (disregarding time and timezone) is within the specified date. |
+| sentOn | `Date` | Returns emails whose DATE header (disregarding time and timezone) is within the specified date. |
+| since | `Date` | Returns emails whose internal date (disregarding time and timezone) is within or later than the specified date. |
+| sentSince | `Date` | Returns emails whose DATE header (disregarding time and timezone) is within or later than the specified date. |
+| before | `Date` | Returns emails whose internal date (disregarding time and timezone) is before the specified date. |
+| sentBefore | `Date` | Returns emails whose DATE header (disregarding time and timezone) is before the specified date. |
+| not | `string` | Returns emails whose text does not contain the specified string (`NOT TEXT ...`). |
+| or | `[string, string][]` | Returns emails matching any of the given `[searchKey, value]` pairs (combined with `OR`). |
+| uid | `string` | Returns emails whose unique identifier corresponds to the specified UID set, e.g. `"1:10"` or `"42"`. |
+
+---
+
+# STORE flags
+
+> **Tip:** A folder must be selected (see ["SELECT folder"](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/folders/select)) before running this function.
+
+This function adds, removes or replaces flags on one or more messages.
+
+## Usage
+
+```ts
+await imap.storeFlags("1:5", ["Seen"], "add")       // add the \Seen flag
+await imap.storeFlags("1:5", ["Seen"], "remove")    // remove the \Seen flag
+await imap.storeFlags("1:5", ["Flagged"], "replace")// replace all flags with \Flagged
+
+// By UID instead of sequence number
+await imap.storeFlags("42", ["Deleted"], "add", true)
+```
+
+| Argument | Type | Description |
+| ---- | ---- | ---- |
+| `target` | `string` | Sequence number range (or UID range with `useUid`), e.g. `"1:5"` or `"42"`. |
+| `flags` | `string[]` | Flags without the backslash, e.g. `["Seen", "Flagged"]`. |
+| `mode` | `"add" \| "remove" \| "replace"` | Defaults to `"add"`. |
+| `useUid` | `boolean` | Uses `UID STORE` when true. |
+
+## Response
+
+Returns the updated flags of each message that the server reported as changed:
+
+```ts
+[ { seq: 1, flags: [ 'Flagged', '$NotJunk' ] } ]
+```
+
+> **Info:** Servers only report messages whose flags actually changed — a no-op STORE may return an empty array.
+
+---
+
+# EXPUNGE
+
+> **Tip:** A folder must be selected (see ["SELECT folder"](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/folders/select)) before running this function.
+
+> **Danger:** This function **permanently deletes** all messages marked with the `\Deleted` flag. Make sure you only run it after marking the intended messages with `storeFlags(..., ["Deleted"], "add")`.
+
+This function permanently removes all messages marked with the `\Deleted` flag from the selected mailbox.
+
+## Usage
+
+```ts
+// Plain EXPUNGE — removes all \Deleted messages
+let expunged = await imap.expunge()
+
+// UID EXPUNGE — only removes \Deleted messages whose UID is in the range
+let expungedUids = await imap.expunge({ range: "1:10", useUid: true })
+```
+
+| Argument | Type | Description |
+| ---- | ---- | ---- |
+| `range` | `string` | Optional sequence/UID range to restrict expunging to. **Required for `UID EXPUNGE`**. |
+| `useUid` | `boolean` | Uses `UID EXPUNGE` when true. |
+
+## Response
+
+Returns the sequence numbers (or UIDs) of the expunged messages:
+
+```ts
+[ 12, 13, 14 ]
+```
+
+> **Info:** After an expunge the sequence numbers of the remaining messages shift. Use UIDs (`useUid: true` everywhere) if you need stable references.
+
+---
+
+# COPY emails
+
+This function copies messages to another folder.
+
+## Usage
+
+```ts
+await imap.copy("INBOX/archive", "1:5")              // copy by sequence numbers
+await imap.copy("INBOX/archive", "42", true)         // copy a single UID
+```
+
+| Argument | Type | Description |
+| ---- | ---- | ---- |
+| `target` | `string` | Destination folder. |
+| `range` | `string` | Sequence number range (or UID range with `useUid`), e.g. `"1:5"` or `"42"`. |
+| `useUid` | `boolean` | Uses `UID COPY` when true. |
+
+## Response
+
+When the server reports the copied UIDs (the `COPYUID` response code, e.g. `[COPYUID 432432 42:69 1202:1229]`), the function returns:
+
+```ts
+type CopyUidInfo = {
+    uidValidity: number,   // UIDVALIDITY of the destination mailbox
+    sourceUIDs: string,    // UID set of the source messages
+    destUIDs: string       // UID set of the copies in the destination
+}
+```
+
+Otherwise (server doesn't send `COPYUID`) it returns `null`.
+
+Throws an [ImapError](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/error_handling) if the target folder doesn't exist or the range is invalid.
+
+---
+
+# MOVE emails
+
+This function moves messages to another folder. MOVE is part of the base IMAP4rev2 protocol (RFC 9051 §6.4.8); on IMAP4rev1 servers it requires the `MOVE` capability (RFC 6851) — check `imap.capabilities` if you're not sure your provider supports it.
+
+## Usage
+
+```ts
+await imap.move("INBOX/archive", "1:5")              // move by sequence numbers
+await imap.move("INBOX/archive", "42", true)         // move a single UID
+```
+
+| Argument | Type | Description |
+| ---- | ---- | ---- |
+| `target` | `string` | Destination folder. |
+| `range` | `string` | Sequence number range (or UID range with `useUid`), e.g. `"1:5"` or `"42"`. |
+| `useUid` | `boolean` | Uses `UID MOVE` when true. |
+
+## Response
+
+Like [`copy()`](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/misc/copy), the function returns a [`CopyUidInfo`](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/misc/copy) (`{ uidValidity, sourceUIDs, destUIDs }`) when the server reports the moved UIDs via `COPYUID`, and `null` otherwise.
+
+> **Info:** MOVE is a combined COPY + EXPUNGE — the messages are copied to the target folder and removed (with `\Deleted`) from the selected one. If your provider lacks `MOVE`, use `copy()` followed by `storeFlags(..., ["Deleted"], "add")` and `expunge()`.
+
+---
+
+# STATUS
+
+This function requests status information about a folder without selecting it.
+
+## Usage
+
+```ts
+let status = await imap.status("INBOX")
+
+// Only request specific items
+let minimal = await imap.status("INBOX", ["MESSAGES", "UNSEEN"])
+let deleted = await imap.status("INBOX", ["MESSAGES", "DELETED", "SIZE"])
+```
+
+By default all of the following items are requested: `MESSAGES`, `RECENT`, `UIDNEXT`, `UIDVALIDITY`, `UNSEEN`.
+
+The supported items are `MESSAGES`, `RECENT`, `UIDNEXT`, `UIDVALIDITY`, `UNSEEN` (IMAP4rev1) plus `DELETED` and `SIZE` (added in RFC 9051 §6.3.11).
+
+## Response
+
+Returns a `Record<string, number>` with lowercased keys:
+
+```ts
+{
+    messages: 78,
+    recent: 0,
+    uidnext: 92,
+    uidvalidity: 1687639849,
+    unseen: 23
+}
+```
+
+---
+
+# APPEND
+
+This function appends a message to a folder.
+
+## Usage
+
+```ts
+const rawMessage = [
+    "From: user@example.com",
+    "To: friend@example.com",
+    "Subject: Hello",
+    "MIME-Version: 1.0",
+    "Content-Type: text/plain; charset=UTF-8",
+    "",
+    "Hello there!",
+    ""
+].join("\r\n")
+
+await imap.append("INBOX", rawMessage)
+
+// With flags and an internal date
+await imap.append("INBOX", rawMessage, ["Seen"], new Date())
+```
+
+| Argument | Type | Description |
+| ---- | ---- | ---- |
+| `folder` | `string` | Destination folder. |
+| `message` | `string \| Uint8Array` | The full raw message (headers + body). |
+| `flags` | `string[]` | Flags to set on the appended message, e.g. `["Seen"]`. |
+| `internalDate` | `Date` | Internal date of the message (optional). |
+
+The message is sent as an IMAP literal, so it may contain binary data and any line endings.
+
+## Response
+
+When the server reports the assigned UID (the `APPENDUID` response code), the function returns:
+
+```ts
+type AppendResult = {
+    uidValidity: number,   // UIDVALIDITY of the destination mailbox
+    uid: number            // UID assigned to the appended message
+}
+```
+
+Otherwise it returns `null`.
+
+---
+
+# Check
+
+This command requests the IMAP server to do some maintenance on the mailbox. It is weird for a client to be able to request this, and it basically isn't used anywhere, however it is included due to it being in the `RFC 3501` spec.
+
+> **Info:** The latest IMAP spec (`RFC 9051`, published in 2021) [removes the CHECK command](https://datatracker.ietf.org/doc/html/rfc9051#appendix-E-2.17). When the server advertises `IMAP4rev2`, `check()` throws an error instead of sending the command — use [`NOOP`](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/misc/commands) or [`IDLE`](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/misc/idle) instead.
+
+## Usage
+
+```ts
+let responses = await imap.check()   // IMAP4rev1 servers only
+```
+
+## Response
+
+Returns the untagged response lines received while processing the command (usually an empty array).
+
+---
+
+# IDLE
+
+> **Tip:** A folder must be selected (see ["SELECT folder"](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/folders/select)) before running this function.
+
+IDLE (RFC 9051 §6.3.13) lets the server push unsolicited updates (new mail, expunges, flag changes, ...) as they happen, instead of you polling. It is the IMAP way of "watching a mailbox".
+
+## Usage
+
+```ts
+await imap.idle((item) => {
+    console.log(item.line)   // "* 5 EXISTS", "* 2 EXPUNGE", "* 1 FETCH ...", ...
+    // return false to leave IDLE
+})
+```
+
+The callback receives every untagged response (`{ line, literal }`) while idling. Return `false` from it to stop idling — the library then sends `DONE` and waits for the tagged OK.
+
+IDLE ends cleanly (the connection stays usable) in three ways:
+
+- the callback returns `false`,
+- no updates arrive within the read timeout (`timeoutMs`, default 30000) — this is a **clean exit, not an error**; re-issue `idle()` to keep watching,
+- the server ends IDLE itself (the library detects the tagged completion and does not send `DONE`).
+
+## Example — wait for new mail
+
+```ts
+// Wait until a new message arrives in INBOX
+await imap.idle((item) => {
+    if (item.line.startsWith("* ") && item.line.endsWith(" EXISTS")) {
+        console.log("New mail!")
+        return false // stop idling
+    }
+})
+```
+
+## Example — keep watching (re-idle loop)
+
+Servers SHOULD end IDLE after ~30 minutes (RFC 9051), and most clients re-enter IDLE periodically anyway. Because a quiet mailbox times out cleanly, a watch loop is just a `while`:
+
+```ts
+for (;;) {
+    await imap.idle((item) => {
+        console.log(item.line)
+        // return false to leave IDLE early
+    })
+    // The timeout ended IDLE (or the server did) — the connection is still
+    // usable, re-enter IDLE to keep watching.
+}
+```
+
+## IDLE on Cloudflare Workers
+
+IMAP connections created with `cloudflare:sockets` live and die with the Worker invocation — there is no way to hold a socket open *between* requests. IDLE is therefore "wait for updates during one invocation". Within that model it works well:
+
+- **HTTP-triggered requests have no wall-clock limit** while the client stays connected, and waiting on the socket costs ~0 CPU time (even the free plan's 10 ms CPU cap is not consumed). A worker can stream updates to a browser via SSE/WebSocket for as long as the client is connected.
+- **Cron Triggers / Queue consumers / Durable Object alarms are capped at 15 minutes** of wall time per invocation — re-enter `idle()` (or reconnect) inside that window. This lines up with the RFC's recommendation to re-idle periodically.
+- **Durable Objects**: an open outbound TCP socket keeps the DO alive for up to 15 minutes per connection (after that, standard eviction rules resume) — reconnect or re-idle before then.
+- **Billing**: on the paid plan, duration (wall-clock time) is billed per second; long IDLE sessions accumulate duration. On the free plan there are no duration charges.
+
+## Limitations
+
+- While IDLE is active **no other command may be issued** on the connection (the library rejects them with `Another IMAP command is already in progress...`).
+- If the server closes the connection mid-IDLE (crash, restart), `idle()` throws — re-run `connect()` before re-idling.
+- IDLE is part of the base IMAP4rev2 protocol; IMAP4rev1 servers need the `IDLE` capability.
+
+---
+
+# Protocol commands
+
+This page covers the low-level protocol commands: `capability()`, `noop()` and `enable()`.
+
+## capability()
+
+Re-issues the `CAPABILITY` command (RFC 9051 §6.1.1), updates `imap.capabilities` and returns it. Useful after a `STARTTLS` upgrade (the library already does this automatically during `connect()`).
+
+```ts
+const caps = await imap.capability()
+// caps === imap.capabilities, e.g. ["IMAP4rev1", "UIDPLUS", "MOVE"]
+```
+
+## noop()
+
+Sends `NOOP` — commonly used to keep the connection alive and to trigger any pending unsolicited updates. Returns the untagged responses received.
+
+```ts
+const updates = await imap.noop()
+// e.g. [ { line: "* 5 EXISTS", literal: null } ]
+```
+
+## enable()
+
+Enables IMAP extensions via the `ENABLE` command (RFC 9051 §6.3.1). Only valid in the authenticated state, before selecting a mailbox. Returns the capabilities the server confirmed.
+
+```ts
+const enabled = await imap.enable("CONDSTORE")
+// e.g. ["CONDSTORE"]
+```
+
+> **Info:** `connect()` already issues `ENABLE IMAP4rev2` automatically when a server advertises both `IMAP4rev1` and `IMAP4rev2` (RFC 9051 Appendix A) — you normally don't need to call `enable()` yourself. It is exposed for enabling extensions like `CONDSTORE` (RFC 7162).
+
+---
+
+# Errors
+
+They are a part of life when coding. They happen in every project, and thus they should be as descriptive as possible.
+
+## ImapError
+
+`cf-imap` throws a descriptive `ImapError` whenever the IMAP server responds to a command with an error status (`NO` or `BAD`). It is an `Error` subclass with a few extra properties:
+
+```ts
+import { CFImap, ImapError } from "cf-imap"
+
+try {
+    await imap.connect()
+} catch (e) {
+    if (e instanceof ImapError) {
+        console.log(e.status)        // "NO" | "BAD"
+        console.log(e.tag)           // the command tag, e.g. "A1"
+        console.log(e.messageText)   // the server's error message, e.g. "Login failed"
+        console.log(e.untagged)      // the raw untagged response items received before the error
+    }
+}
+```
+
+| Property | Type | Description |
+| ---- | ---- | ---- |
+| `status` | `"NO" \| "BAD"` | The status code of the tagged response. |
+| `tag` | `string` | The command tag the error belongs to. |
+| `messageText` | `string` | The human-readable message from the server. |
+| `untagged` | `{ line: string, literal?: Uint8Array }[]` | The raw untagged response items received before the error — great for debugging. |
+
+## Other errors
+
+Non-protocol failures throw regular `Error`s:
+
+- **Read timeouts** — `IMAP read timed out after Xms` (configurable via the `timeoutMs` option). Exception: during `idle()` a timeout is a **clean exit** (see [IDLE](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/misc/idle)) — it ends IDLE without closing the connection instead of throwing.
+- **Connection drops** — `IMAP connection closed by server`.
+- **Usage mistakes** — e.g. running a command before `connect()` or before selecting a folder.
+- **`LOGINDISABLED`** — `connect()` refuses to send `LOGIN` when the server advertises `LOGINDISABLED` and no `AUTH=PLAIN` is available (RFC 9051 §6.2.3).
+- **Concurrent commands** — only one IMAP command may be in flight at a time; issuing a second one (including during `idle()`) throws `Another IMAP command is already in progress...`.
+- **`check()` on IMAP4rev2** — `CHECK` was removed from RFC 9051, so `check()` throws on rev2 sessions.
+
+If you believe something that *should* work is throwing an error, [raise an issue on GitHub](https://github.com/Exerra/cf-imap/issues) and include the error message along with `e.untagged` / the `cause` of the error.
+
+---
+
+# Logging out
+
+This function lets you log out of the session and close the socket. It is recommended to use this as to not run the Worker needlessly (some providers auto-kick you after a while, some keep the connection open indefinitely).
+
+## Usage
+
+```ts
+await imap.logout()
+```
+
+`close()` is an alias of `logout()` — both return `true` when done.
+
+After logging out, the instance is left in a "not connected" state: calling any other function will throw a descriptive error until `connect()` is ran again.
+
+---
+
+# Extendability
+
+> **Warning:** Breaking change from `v0.x.x`: the raw socket, writer, reader, encoder and decoder are **no longer exposed** as public properties. They are now internal implementation details of the package.
+
+This was done as part of the protocol rewrite — commands now go through a tagged pipeline with a single, literal-aware response reader, so exposing the raw streams would allow bypassing that state machine and corrupting the connection state.
+
+## What to use instead
+
+- **Accessing data the package doesn't parse yet** — the raw response items are available on thrown errors via `ImapError.untagged` (see [Errors](https://docs.exerra.xyz/docs/npm-packages/cf-imap/v1.0.0/error_handling)).
+- **Custom commands / unsupported functionality** — if you need something the package doesn't support (e.g. folder management commands), please [raise an issue on GitHub](https://github.com/Exerra/cf-imap/issues) — there is a good chance it fits the package's roadmap.
+
+## Public surface
+
+The `CFImap` instance exposes the following for inspection:
+
+| Property | Type | Description |
+| ---- | ---- | ---- |
+| `imap.session` | `{ id?: string, protocol?: string }` | Session information after connecting. |
+| `imap.capabilities` | `string[]` | Capabilities advertised by the server, e.g. `["IMAP4rev1", "UIDPLUS", "MOVE"]`. |
+| `imap.selectedFolder` | `string` | The currently selected folder. |
